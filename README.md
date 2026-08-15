@@ -13,9 +13,12 @@ recurring "tunes" of its own.
 ## Current status
 
 Early build-out. First piece under construction: a **gesture recognition** layer for
-live monophonic input (bass, sax, or any instrument via a pitch-to-MIDI tracker, e.g.
-a Sonuus i2M), so a human performer can cue the ensemble — handovers, dialogue — using
-a small vocabulary of playable gestures rather than only note-level features.
+monophonic note streams (bass, sax, or any instrument via a pitch-to-MIDI tracker, e.g.
+a Sonuus i2M — but equally an AI voice's own generated output), so any performer, human
+or AI, can cue the ensemble — handovers, dialogue — using a small vocabulary of
+playable gestures rather than only note-level features. As in Voyager/Forager, gesture
+recognition is meant to be mutual: any performer's gesture can prompt a response from
+any other, not just human-to-AI.
 
 This is a Python port of [AGRP](https://github.com/davidderoure/AGRP), David's 2022
 rule-based gesture recogniser built for George Lewis's Voyager/Forager work at PRiSM
@@ -37,6 +40,12 @@ plain class — one instance per voice, so multiple concurrent instruments can e
 their own recognizer within a single process. This mirrors how the AGRP concert setup
 actually worked (one mic, one Sonuus, one recogniser per instrument) but makes that
 modularity a first-class part of the code rather than a browser-tab convention.
+
+Its core interface (`note_on`/`note_off`, and the `midi_note_on`/`midi_note_off`
+convenience wrappers) is already source-agnostic — it doesn't care whether note events
+arrive from a live MIDI port or are generated in-process by an AI voice, so an AI
+voice's own output can be fed through the same recogniser without any extra bridging
+code, just by calling those methods directly instead of going through `MidiListener`.
 
 ## Layout
 

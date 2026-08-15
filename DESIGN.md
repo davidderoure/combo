@@ -124,6 +124,11 @@ needed. That directly matches combo's input scope (§6).
 - These gestures were general call-and-response dialogue gestures in Voyager, not
   handover-specific — combo still needs to decide which gesture(s), or gesture+rest
   patterns, are handover triggers specifically vs. general responsive cues.
+- **Symmetric across human and AI voices, matching §2**: gesture recognition isn't a
+  human-only input feature. `SubGestureRecognizer`'s core interface is source-agnostic
+  (quartertone note + amplitude events in, sub-gesture events out) — an AI voice's own
+  generated output can be fed through the same recogniser as a live human's, so any
+  voice can cue any other, exactly as Voyager's mutual gesture recognition intended.
 - **PRiSM's alternative ML-based recogniser**
   ([PRiSM-MusicGestureRecognition](https://github.com/rncm-prism/PRiSM-MusicGestureRecognition))
   took a different approach — raw audio, spectrogram features, trained classifier per
