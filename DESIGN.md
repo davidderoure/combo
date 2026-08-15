@@ -65,21 +65,29 @@ is deliberately close to IRCAM ImproteK's "scenario" concept (see §11) — a ch
 as an explicit, reusable, structural object — and is the piece of combo's design with
 the most direct published prior art.
 
-## 4. Three generation modes
+## 4. Generation modes, paced by whether a human occupies any role
 
-Decoupled by what real-time constraint (if any) applies:
+The real-time constraint on generation is a direct consequence of §2/§11's principle,
+not a separately-chosen "mode": it follows from whether a human occupies *any* role at
+all — performer or director/listener — not from a fixed enumeration. Three cases fall
+out of that rule:
 
-1. **Batch/offline self-generation** — no real-time pacing at all; the generator runs
-   as fast as inference allows. For research-corpus generation (the emergent-tunes
-   work, §9) and for quickly iterating the arc/harmony/role logic.
-2. **Live radio-station self-play** — no human, but real-time paced because a live
-   listener is tuning in.
-3. **Interactive rehearsal** — real-time, reactive to a live human.
+1. **Machine speed — no human in any role.** No real-time pacing at all; the generator
+   runs as fast as inference allows. This covers both the **one-shot song generator**
+   (generate a single song right now, as fast as possible, then return it — nobody is
+   listening live) and generating a large research corpus (the emergent-tunes work,
+   §9) or quickly iterating the arc/harmony/role logic — same mechanism, different call
+   pattern, not different modes.
+2. **Live radio-station self-play** — no human performer, but a human occupies the
+   director/listener role (even just "an audience is listening," per Mood Conductor,
+   §11) — must pace to real time, because a human ear is receiving it live even though
+   nothing is playing back *to* the ensemble.
+3. **Interactive rehearsal** — a human performer is present — real-time, reactive.
 
 Architecturally this means generation should produce a symbolic timeline (notes tagged
 with beat position/duration, not wall-clock time), with playback/scheduling as a
-separate stage — only that later stage needs to know which mode it's in (write
-immediately to a file, or pace to real time).
+separate stage — only that later stage needs to know whether a human occupies any role
+right now (return the result immediately, or pace to real time).
 
 ## 5. Accompaniment-listening
 
