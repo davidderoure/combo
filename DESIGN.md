@@ -7,7 +7,10 @@ for the design; individual decisions below supersede any earlier scattered notes
 song/scenario data model (§3) — both with passing tests, see [README.md](README.md).
 **Designed but not yet built**: everything else below — voice/role architecture (§2),
 generation modes (§4), accompaniment-listening (§5), drums (§7), the gesture
-composition layer and its possible emergence (§9-10), the musical director (§11).
+composition layer and its possible emergence (§9-10), the musical director (§11). Note
+that `input/midi_listener.py` currently only wires up a single MIDI port
+(`config.MIDI_INPUT_PORT`) — a concrete gap against §2's multi-human principle, not a
+design decision; it needs to grow into one listener/recogniser pair per human voice.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into
 a genuine gesture grammar rather than a hand-authored one (§10); can the system
 develop and recall recurring "tunes" of its own (§4, §9).
@@ -33,11 +36,21 @@ chairs. Each voice has an instrument/register profile and a **source**: human-li
 controller (successor to Wolfson's `ArcController`, promoted from phrase-level to
 tune-level).
 
+**Cross-cutting principle (applies to voices here and to directors in §11)**: every
+role in combo — performer/voice, director/listener, and any future role — is a set of
+N independently-sourced slots, each either human or AI, with no assumption that only
+one slot in the whole system is ever human. Multiple simultaneous humans in the same or
+different roles is a real prior-tested case, not a hypothetical one: the AGRP concert
+setup (§9) already ran five human performers at once, each on their own Sonuus tracker
+and MIDI channel. Only the human-facing input plumbing needs to grow to match this —
+see the note on `MidiListener` below.
+
 - **Any instrument can accompany, not just solo** — a human can sit in on any chair,
   including an accompanying one (e.g. play bass while an AI voice solos), and the
   system's listening/response logic must be symmetric to that.
-- **Same-instrument doubling is supported**: two saxes, two basses (human+AI, or AI+AI
-  as a generalisation of Wolfson's self-test mode). When two same-register voices are
+- **Same-instrument doubling is supported**: two saxes, two basses — any combination of
+  sources (human+AI, human+human, or AI+AI, the last a generalisation of Wolfson's
+  self-test mode). When two same-register voices are
   both in an accompanying role at once, the **default is to split the role** — one
   plays full accompaniment, the other lays out or plays sparse punctuation — rather
   than both playing independently at full density and colliding.
