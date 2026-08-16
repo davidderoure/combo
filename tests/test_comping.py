@@ -1,0 +1,99 @@
+"""Tests for ensemble/comping.py — no MIDI/audio needed."""
+
+from pathlib import Path
+
+from ensemble.comping import comping_generator
+from ensemble.listening import synthetic_varying_density_generator
+from ensemble.session import Session
+from ensemble.timeline import BEATS_PER_BAR, NoteEvent, Timeline
+from ensemble.voice import Voice
+from song import parse_chart
+
+CHARTS_DIR = Path(__file__).resolve().parent.parent / "songs"
+KEYS_REGISTER = (48, 72)
+LOOKBACK_BARS = 2
+
+
+def load_blues():
+    return parse_chart((CHARTS_DIR / "blues_in_f.chart").read_text())
+
+
+def lookback_window(bar_index: int) -> tuple:
+    since = max(0, bar_index - LOOKBACK_BARS) * BEATS_PER_BAR
+    until = bar_index * BEATS_PER_BAR
+    return since, until
+
+
+def test_busy_target_density_ducks():
+    song = load_blues()
+    gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
+    since, _until = lookback_window(5)
+    tl = Timeline([NoteEvent("sax", 60, 80, since + i * 0.5, 0.1) for i in range(16)])  # 2.0 notes/beat
+    assert gen(song, 5, tl) == []
+
+
+def test_sparse_target_density_fills_with_two_stabs():
+    song = load_blues()
+    gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
+    since, _until = lookback_window(5)
+    tl = Timeline([NoteEvent("sax", 60, 80, since, 0.1)])  # 0.125 notes/beat
+    events = gen(song, 5, tl)
+    assert len(events) == 4  # two stabs, root+fifth each
+    chord = song.chord_at(5 * BEATS_PER_BAR)
+    for e in events:
+        assert e.pitch % 12 in {chord.root, (chord.root + 7) % 12}
+
+
+def test_moderate_target_density_plays_one_stab():
+    song = load_blues()
+    gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
+    since, _until = lookback_window(5)
+    tl = Timeline([NoteEvent("sax", 60, 80, since + i * 2.0, 0.1) for i in range(4)])  # 0.5 notes/beat
+    events = gen(song, 5, tl)
+    assert len(events) == 2  # one stab, root+fifth
+
+
+def test_empty_history_fills_by_default():
+    song = load_blues()
+    gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
+    events = gen(song, 0, Timeline())  # bar_index < lookback_bars -> empty window
+    assert len(events) == 4
+
+
+def test_voice_order_does_not_affect_output():
+    song = load_blues()
+
+    def make_session(reversed_order: bool) -> Session:
+        soloist = Voice(
+            id="sax",
+            instrument="sax",
+            register=(55, 79),
+            source="ai",
+            generator=synthetic_varying_density_generator(seed=1),
+        )
+        comper = Voice(
+            id="keys",
+            instrument="keys",
+            register=KEYS_REGISTER,
+            source="ai",
+            generator=comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=2),
+        )
+        voices = [comper, soloist] if reversed_order else [soloist, comper]
+        return Session(song=song, voices=voices)
+
+    forward = make_session(reversed_order=False).generate()
+    reversed_ = make_session(reversed_order=True).generate()
+    assert forward.events == reversed_.events
+
+
+def test_generator_cannot_corrupt_the_session_timeline():
+    song = load_blues()
+
+    def naughty_generator(song, bar_index, timeline):
+        timeline.add(NoteEvent("intruder", 999, 999, -1.0, 0.1))
+        return []
+
+    naughty = Voice(id="naughty", instrument="test", register=(0, 127), source="ai", generator=naughty_generator)
+    session = Session(song=song, voices=[naughty])
+    result = session.generate()
+    assert all(e.voice_id != "intruder" for e in result)

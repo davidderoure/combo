@@ -81,11 +81,19 @@ class Session:
         timeline = Timeline()
         bar_index = 0
         while bar_index * BEATS_PER_BAR < total_beats:
+            # Every voice generating for this bar sees the same snapshot of prior
+            # bars only (never the current bar, never affected by iteration order
+            # over self.voices) — a copy, not the live timeline, so a generator can't
+            # corrupt the loop by calling .add() on what it's handed (DESIGN.md §5).
+            prior_bars = Timeline(list(timeline.events))
+            bar_events = []
             for voice in self.voices:
                 if voice.source != "ai":
                     continue
-                for event in voice.generator(self.song, bar_index):
-                    timeline.add(replace(event, voice_id=voice.id))
+                for event in voice.generator(self.song, bar_index, prior_bars):
+                    bar_events.append(replace(event, voice_id=voice.id))
+            for event in bar_events:
+                timeline.add(event)
 
             if mode == REAL_TIME:
                 clock.sleep(BEATS_PER_BAR * seconds_per_beat)

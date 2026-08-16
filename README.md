@@ -12,7 +12,7 @@ recurring "tunes" of its own.
 
 ## Current status
 
-Early build-out, three pieces in so far. First: a **gesture recognition** layer for
+Early build-out, four pieces in so far. First: a **gesture recognition** layer for
 monophonic note streams (bass, sax, or any instrument via a pitch-to-MIDI tracker, e.g.
 a Sonuus i2M — but equally an AI voice's own generated output), so any performer, human
 or AI, can cue the ensemble — handovers, dialogue — using a small vocabulary of
@@ -69,8 +69,8 @@ song's tempo (self-play or interactive rehearsal, §4.2/§4.3 — which one depe
 listening, not on this code). `ensemble/generators.py`'s `chord_tone_generator` is a
 deliberately dumb placeholder (root + fifth on beats 1 and 3) whose only job is proving
 the pipeline end-to-end; real generation (an adapted Wolfson model, DYCI2/Dicy2-python,
-or something new — DESIGN.md §12) replaces it once the rest of the skeleton
-(accompaniment-listening, the director) is built and proven against it.
+or something new — DESIGN.md §12) replaces it once the rest of the skeleton (the
+director) is built and proven against it.
 
 The third piece is **drums** (DESIGN.md §7, `ensemble/drums.py`), a rule-based pattern
 engine rather than a trained model (WJazzD has no drum data) — no ML, just another
@@ -81,6 +81,23 @@ until there's a real `ArcController` to ask). Worth being explicit that "brushes
 brush pattern is continuous sweeping texture that `NoteEvent` genuinely can't
 represent, not just something this stub plays badly. `ensemble/demo.py` now runs the
 sax stub and drums together, the first real multi-voice run of the ensemble.
+
+The fourth piece is **accompaniment-listening** (DESIGN.md §5, `ensemble/listening.py`
++ `ensemble/comping.py`) — voices reacting to what other voices have actually played,
+not just to the song/section state drums uses. This needed a real architectural change,
+not just a new file: every `Generator` now receives a defensive-copy snapshot of prior
+bars alongside `(song, bar_index)` (`ensemble/session.py` collects each bar's new
+events separately and only merges them in after every voice has generated for that
+bar, so listening is never affected by voice order — see
+`tests/test_comping.py::test_voice_order_does_not_affect_output`).
+`ensemble/listening.py` extracts all four features DESIGN.md §5 names — density,
+register (as pitch range), dynamics (as average velocity), space/rests (as beats of
+silence) — though only density is actually consumed by the accompanist built here; the
+rest are extracted and tested for future consumers, said plainly rather than left
+implicit. `comping_generator` ducks when its target voice is busy, fills with chord
+stabs when it leaves space, plays one stab otherwise — demonstrated in
+`ensemble/demo.py` against a synthetic varying-density fixture rather than the sax
+stub, since `chord_tone_generator`'s output never varies in density at all.
 
 ## Layout
 
@@ -96,18 +113,25 @@ sax stub and drums together, the first real multi-voice run of the ensemble.
   number of cycles through the changes), and `chart.py`, a plain-text chart format for
   authoring songs by hand — see `songs/blues_in_f.chart` for an example.
 - `ensemble/` — the ensemble skeleton (DESIGN.md §2/§4): `timeline.py` (`NoteEvent`,
-  `Timeline`), `voice.py` (`Voice`), `generators.py` (the stub `chord_tone_generator`),
-  `session.py` (`Session`, generation-mode dispatch, an injectable `Clock` so real-time
-  pacing is testable without actually waiting), `drums.py` (DESIGN.md §7 — rule-based,
-  section-aware `drum_generator`, no ML).
+  `Timeline`), `voice.py` (`Voice`), `generators.py` (the stub `chord_tone_generator`,
+  and `place_in_register`, shared with `comping.py`), `session.py` (`Session`,
+  generation-mode dispatch, an injectable `Clock` so real-time pacing is testable
+  without actually waiting), `drums.py` (DESIGN.md §7 — rule-based, section-aware
+  `drum_generator`, no ML), `listening.py` (DESIGN.md §5 — feature extraction:
+  `density`, `pitch_range`, `average_velocity`, `beats_of_silence`, plus the
+  `synthetic_varying_density_generator` test/demo fixture), `comping.py` (DESIGN.md
+  §5 — the concrete accompanist, `comping_generator`).
 - `tests/test_recognizer.py`, `tests/test_gesture_vocabulary.py`, `tests/test_song.py`,
-  `tests/test_session.py`, `tests/test_drums.py` — no MIDI hardware needed
+  `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
+  `tests/test_comping.py` — no MIDI hardware needed
 - `listen.py` — small runnable script: live MIDI in, prints detected sub-gestures
 - `gesture/demo.py` — small runnable script: replays synthetic gesture sequences
   (seed gestures, record + alias teaching) and prints what's recognised
   (`python -m gesture.demo`)
 - `ensemble/demo.py` — small runnable script: generates a chart's worth of stub sax +
-  drums output and prints it (`python -m ensemble.demo`)
+  drums output and prints it, then a second, separate demonstration of comping's
+  duck/fill behaviour against a synthetic varying-density fixture
+  (`python -m ensemble.demo`)
 
 ## Running
 

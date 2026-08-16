@@ -10,12 +10,18 @@ import time
 from pathlib import Path
 
 from ensemble import MACHINE_SPEED, REAL_TIME, Session, Voice, chord_tone_generator, drum_generator
+from ensemble.comping import BUSY_THRESHOLD, SPARSE_THRESHOLD, comping_generator
 from ensemble.drums import ACOUSTIC_SNARE, CLOSED_HI_HAT, RIDE_CYMBAL_1
+from ensemble.listening import density as listening_density
+from ensemble.listening import synthetic_varying_density_generator
+from ensemble.timeline import BEATS_PER_BAR
 from song import parse_chart
 
 DEFAULT_CHART = Path(__file__).resolve().parent.parent / "songs" / "blues_in_f.chart"
 SAX_REGISTER = (55, 79)
 DRUM_REGISTER = (35, 59)  # not musically meaningful for percussion, kept for Voice's shape
+KEYS_REGISTER = (48, 72)
+COMPING_LOOKBACK_BARS = 2
 
 GM_PERCUSSION_NAMES = {
     ACOUSTIC_SNARE: "Snare",
@@ -35,13 +41,8 @@ def event_label(event) -> str:
     return note_name(event.pitch)
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--chart", type=Path, default=DEFAULT_CHART)
-    parser.add_argument("--mode", choices=[MACHINE_SPEED, REAL_TIME], default=MACHINE_SPEED)
-    args = parser.parse_args()
-
-    song = parse_chart(args.chart.read_text())
+def demo_sax_and_drums(chart_path: Path, mode: str) -> None:
+    song = parse_chart(chart_path.read_text())
     print(f"{song.title}  ({song.tempo_bpm:.0f} bpm, {song.feel}, {song.total_beats:.0f} beats)")
 
     sax = Voice(
@@ -61,7 +62,7 @@ def main() -> None:
     session = Session(song=song, voices=[sax, drums])
 
     started = time.time()
-    timeline = session.generate(mode=args.mode)
+    timeline = session.generate(mode=mode)
     elapsed = time.time() - started
 
     for event in timeline:
@@ -71,7 +72,63 @@ def main() -> None:
             f"{event.voice_id:>5}  {event_label(event):>5}  vel={event.velocity}"
         )
 
-    print(f"\n{len(timeline)} events, {elapsed:.2f}s wall-clock ({args.mode})")
+    print(f"\n{len(timeline)} events, {elapsed:.2f}s wall-clock ({mode})")
+
+
+def demo_comping(chart_path: Path) -> None:
+    print("\n--- Accompaniment-listening demo (DESIGN.md §5) ---")
+    print("Using a synthetic varying-density fixture as a stand-in soloist, not the")
+    print("sax stub above: chord_tone_generator plays a constant 4 notes every bar,")
+    print("so there'd be nothing for comping to react to. Comping's response for bar")
+    print(f"N is based on the soloist's density over bars [N-{COMPING_LOOKBACK_BARS}, N)")
+    print("— the prior bars, not bar N itself — so that's what's printed below.\n")
+
+    song = parse_chart(chart_path.read_text())
+    soloist = Voice(
+        id="soloist",
+        instrument="test-fixture",
+        register=SAX_REGISTER,
+        source="ai",
+        generator=synthetic_varying_density_generator(seed=1),
+    )
+    comper = Voice(
+        id="keys",
+        instrument="keys",
+        register=KEYS_REGISTER,
+        source="ai",
+        generator=comping_generator(
+            KEYS_REGISTER, target_voice_id="soloist", lookback_bars=COMPING_LOOKBACK_BARS, seed=2
+        ),
+    )
+    session = Session(song=song, voices=[soloist, comper])
+    timeline = session.generate(mode=MACHINE_SPEED)
+
+    # Classify using the *same* listening.density() call comping_generator makes
+    # internally, over the identical window — not by re-counting raw events with a
+    # bar-boundary cutoff, which a humanised note can jitter across and make the
+    # printed classification disagree with what comping actually decided.
+    for bar_index in range(12):
+        since = max(0, bar_index - COMPING_LOOKBACK_BARS) * BEATS_PER_BAR
+        until = bar_index * BEATS_PER_BAR
+        d = listening_density(timeline, "soloist", since, until)
+        if d >= BUSY_THRESHOLD:
+            response = "duck"
+        elif d <= SPARSE_THRESHOLD:
+            response = "fill"
+        else:
+            response = "moderate"
+        comping_notes = sum(1 for e in timeline if e.voice_id == "keys" and until <= e.start_beat < until + BEATS_PER_BAR)
+        print(f"  bar {bar_index:2d}: soloist density {d:.2f} notes/beat -> comping {response} ({comping_notes} notes)")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--chart", type=Path, default=DEFAULT_CHART)
+    parser.add_argument("--mode", choices=[MACHINE_SPEED, REAL_TIME], default=MACHINE_SPEED)
+    args = parser.parse_args()
+
+    demo_sax_and_drums(args.chart, args.mode)
+    demo_comping(args.chart)
 
 
 if __name__ == "__main__":

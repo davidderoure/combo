@@ -5,20 +5,26 @@ for the design; individual decisions below supersede any earlier scattered notes
 
 **Built so far**: the gesture sub-gesture layer (§9, ported from AGRP), the
 song/scenario data model (§3), an ensemble skeleton MVP (§2/§4), a gesture vocabulary
-composition layer MVP (§10.1/§10.2), and a rule-based drums voice (§7 — see
-[README.md](README.md)). The ensemble MVP is a thin `Voice`, a `Session` that steps a
-`Song` bar-by-bar into a symbolic `Timeline`, and machine-speed-vs-real-time pacing
-behind a single generation loop — proven multi-voice, not just single-voice, via
-`ensemble/demo.py` running the `chord_tone_generator` sax stub alongside the drums
-voice together over `blues_in_f.chart`. The gesture vocabulary MVP
-(`gesture/vocabulary.py`, `GestureRecognizer`) composes `SubGestureRecognizer`'s output
-into named `Gesture`s: two argument-less seed gestures (`handover()`, `reset_tempo()`),
-and the record/alias/pending teaching mechanism from §10.2 (a reserved begin/end
-marker pair, chosen for a checkable — not arbitrary — reason: see the module
-docstring). Drums (`ensemble/drums.py`, `drum_generator`) are section-aware via
-`Song.section_at` (sparse under head/out, medium by default, busy on a section's last
-chorus) with honestly-flagged discrete-hits-not-continuous-brushes and seeded
-humanisation. All with passing tests.
+composition layer MVP (§10.1/§10.2), a rule-based drums voice (§7), and
+accompaniment-listening (§5 — see [README.md](README.md)). The ensemble MVP is a thin
+`Voice`, a `Session` that steps a `Song` bar-by-bar into a symbolic `Timeline`, and
+machine-speed-vs-real-time pacing behind a single generation loop — proven multi-voice,
+not just single-voice, via `ensemble/demo.py` running the `chord_tone_generator` sax
+stub alongside the drums voice together over `blues_in_f.chart`. The gesture
+vocabulary MVP (`gesture/vocabulary.py`, `GestureRecognizer`) composes
+`SubGestureRecognizer`'s output into named `Gesture`s: two argument-less seed gestures
+(`handover()`, `reset_tempo()`), and the record/alias/pending teaching mechanism from
+§10.2 (a reserved begin/end marker pair, chosen for a checkable — not arbitrary —
+reason: see the module docstring). Drums (`ensemble/drums.py`, `drum_generator`) are
+section-aware via `Song.section_at` (sparse under head/out, medium by default, busy on
+a section's last chorus) with honestly-flagged discrete-hits-not-continuous-brushes and
+seeded humanisation. Accompaniment-listening (`ensemble/listening.py`,
+`ensemble/comping.py`) required extending every `Generator` to receive a defensive-copy
+snapshot of prior bars, not just `(song, bar_index)` — voices can now actually listen
+to each other; the concrete accompanist (`comping_generator`) ducks/fills/plays
+moderately based on a target voice's recent density, demonstrated against a synthetic
+varying-density fixture since the sax stub's density never varies. All with passing
+tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, *multi-human* sessions specifically (multiple
 simultaneous AI voices already work — see above — the gap is live human input, not the
@@ -27,10 +33,12 @@ skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(u
 — the data model can carry params, nothing populates them from raw playing yet) and
 §10.3's automatic inference of a genuinely new (non-aliased) taught meaning, within the
 gesture vocabulary layer; real swing-timing (triplet-based ride) and generative/soloing
-behaviour within drums.
-**Designed but not yet built at all**: accompaniment-listening (§5), the musical
-director and its two channels (§11), and the unified MIDI-only human input covering
-performer, director, and audience (§6). Note that `input/midi_listener.py` currently
+behaviour within drums; "mirrored" builds near arc peaks and the same-register
+role-split default applied between two accompanists, within accompaniment-listening —
+both need machinery (`ArcController`, role assignment) that doesn't exist yet.
+**Designed but not yet built at all**: the musical director and its two channels
+(§11), and the unified MIDI-only human input covering performer, director, and
+audience (§6). Note that `input/midi_listener.py` currently
 only wires up a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap against
 §2's multi-human principle, not a design decision; it needs to grow into one
 listener/recogniser pair per human voice, and eventually a room-mic path for the
@@ -171,6 +179,28 @@ when they leave space), with occasional **mirrored** builds near arc peaks. Appl
 symmetrically regardless of whether the accompanied voice is human or AI. The
 same-register role-split default (§2) is this same complementary logic applied
 laterally, between two accompanists, not just between accompanist and soloist.
+
+- **Status**: the complementary, accompanist-listens-to-soloist case is built
+  (`ensemble/listening.py`, `ensemble/comping.py`), tests passing. Required a real
+  architectural extension, not just a new file: every `Generator` now receives a
+  snapshot of prior bars (a defensive copy, not the live timeline — see
+  `ensemble/session.py`) alongside `(song, bar_index)`, so a voice can actually listen
+  to what others have already played. `chord_tone_generator` and `drum_generator` were
+  updated to accept (and ignore) the new argument — the "extend on integration" step
+  the MVP-per-subsystem plan anticipated.
+- **Feature extraction**: all four of density, register (as pitch range), dynamics (as
+  average velocity), and space/rests (as beats of silence) are implemented in
+  `ensemble/listening.py` — but only density is actually consumed by the comping
+  accompanist built here. The other three are extracted and tested for future
+  consumers, not yet used by anything. Said plainly rather than left to be discovered.
+- **Not built**: "occasional mirrored builds near arc peaks" (needs a peak/arc signal
+  — no `ArcController` exists yet) and the same-register role-split default applied
+  between two accompanists (needs role assignment — §2's role machinery isn't built
+  either). Only the single accompanist-listens-to-one-soloist case exists.
+- `ensemble/demo.py` demonstrates it against a synthetic varying-density fixture
+  (`synthetic_varying_density_generator`), not the sax stub — `chord_tone_generator`
+  plays a constant 4 notes every bar with no density variation at all, so there'd be
+  nothing for an accompanist to visibly react to.
 
 ## 6. Human input: everything through MIDI, no control panels or apps
 

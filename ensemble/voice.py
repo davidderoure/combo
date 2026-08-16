@@ -9,13 +9,15 @@ against (Phase 4+ in the build plan) — deliberately not included here.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
-from .timeline import NoteEvent
+from .timeline import NoteEvent, Timeline
 
 if TYPE_CHECKING:
     from song import Song
 
-# (song, bar_index) -> notes for that bar
-Generator = Callable[["Song", int], List[NoteEvent]]
+# (song, bar_index, timeline-of-prior-bars) -> notes for that bar. The timeline lets a
+# voice listen to what other voices have already played (DESIGN.md §5) — see
+# ensemble/session.py for exactly what "prior" means and why.
+Generator = Callable[["Song", int, Timeline], List[NoteEvent]]
 
 
 @dataclass

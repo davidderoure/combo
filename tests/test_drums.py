@@ -13,7 +13,7 @@ from ensemble.drums import (
     _density_for_bar,
     drum_generator,
 )
-from ensemble.timeline import BEATS_PER_BAR
+from ensemble.timeline import BEATS_PER_BAR, Timeline
 from song import parse_chart
 
 CHARTS_DIR = Path(__file__).resolve().parent.parent / "songs"
@@ -53,7 +53,7 @@ def _assert_near_beat(event, bar_index, expected_offset):
 
 
 def test_sparse_bar_is_hihat_on_two_and_four_only():
-    events = drum_generator(seed=1)(load_blues(), 0)
+    events = drum_generator(seed=1)(load_blues(), 0, Timeline())
     assert len(events) == 2
     assert all(e.pitch == CLOSED_HI_HAT for e in events)
     _assert_near_beat(events[0], 0, 1.0)
@@ -61,7 +61,7 @@ def test_sparse_bar_is_hihat_on_two_and_four_only():
 
 
 def test_medium_bar_adds_a_walking_ride_pattern():
-    events = drum_generator(seed=1)(load_blues(), 12)
+    events = drum_generator(seed=1)(load_blues(), 12, Timeline())
     hihat = [e for e in events if e.pitch == CLOSED_HI_HAT]
     ride = [e for e in events if e.pitch == RIDE_CYMBAL_1]
     assert len(hihat) == 2
@@ -70,7 +70,7 @@ def test_medium_bar_adds_a_walking_ride_pattern():
 
 
 def test_busy_bar_adds_syncopated_snare_accents():
-    events = drum_generator(seed=1)(load_blues(), 36)
+    events = drum_generator(seed=1)(load_blues(), 36, Timeline())
     snare = [e for e in events if e.pitch == ACOUSTIC_SNARE]
     assert 1 <= len(snare) <= 2
     assert len(events) == 6 + len(snare)
@@ -82,13 +82,13 @@ def test_busy_bar_adds_syncopated_snare_accents():
 
 def test_same_seed_is_reproducible():
     song = load_blues()
-    a = drum_generator(seed=7)(song, 36)
-    b = drum_generator(seed=7)(song, 36)
+    a = drum_generator(seed=7)(song, 36, Timeline())
+    b = drum_generator(seed=7)(song, 36, Timeline())
     assert a == b
 
 
 def test_no_seed_runs_without_error():
-    events = drum_generator()(load_blues(), 36)
+    events = drum_generator()(load_blues(), 36, Timeline())
     assert len(events) > 0
 
 
@@ -96,5 +96,5 @@ def test_all_pitches_are_known_gm_percussion_notes():
     song = load_blues()
     gen = drum_generator(seed=3)
     for bar_index in range(60):
-        for event in gen(song, bar_index):
+        for event in gen(song, bar_index, Timeline()):
             assert event.pitch in ALL_PITCHES
