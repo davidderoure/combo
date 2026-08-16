@@ -30,10 +30,22 @@ which took a different, audio/ML-based approach and was adopted for later perfor
 down / same / trill / long-note detection from a stream of pitch + amplitude events).
 It's a faithful port with a few fixes and one accuracy improvement — see comments at
 the top of the file for what changed and why. It emits **sub-gestures**
-(`R`, `X`, `U`, `D`, `S`, `T`, `L`), not yet the higher-level named gestures (runs vs.
-rips, up-down runs, forte-piano, etc.) — composing those from sequences of sub-gestures
-was never finished in AGRP and is the next piece of work here, to be developed against
-real/replayed gesture recordings rather than designed in the abstract.
+(`R`, `X`, `U`, `D`, `S`, `T`, `L`) — composing those into named higher-level gestures
+was never finished in AGRP; `gesture/vocabulary.py` picks that up (DESIGN.md §10).
+
+`gesture/vocabulary.py`'s `GestureRecognizer` wraps a `SubGestureRecognizer` and
+composes its sub-gesture stream into named `Gesture`s, via two mechanisms (§10.1/§10.2,
+both with passing tests): a small **seeded** vocabulary (`handover()`, `reset_tempo()`
+— placeholder patterns, not meant to be musically final any more than the ensemble's
+stub generator was), and a **taught** mechanism — a reserved begin/end sub-gesture
+marker pair, chosen for a checkable reason (two same-direction runs in a row can't
+happen from ordinary continuous phrasing, per `SubGestureRecognizer`'s own state
+machine — see the module docstring), that lets a human teach a new gesture entirely by
+playing: alias an existing meaning to new material, or record something whose meaning
+isn't resolved yet (stored, not guessed at). Recognising a gesture's *parameters*
+(`handover(target=bass)`, not just `handover()`) and automatically working out a
+genuinely new, unaliased meaning are both explicitly not attempted here — see DESIGN.md
+§10 for why those are separate, harder problems.
 
 Unlike AGRP (one browser tab per instrument channel), `SubGestureRecognizer` is a
 plain class — one instance per voice, so multiple concurrent instruments can each get
@@ -63,6 +75,9 @@ or something new — DESIGN.md §12) replaces it once the rest of the skeleton
 ## Layout
 
 - `gesture/recognizer.py` — the ported sub-gesture state machine (no MIDI/IO deps)
+- `gesture/vocabulary.py` — composes sub-gestures into named `Gesture`s (DESIGN.md
+  §10.1/§10.2): `Gesture`, `GestureRule`, `GestureRecognizer` (wraps a
+  `SubGestureRecognizer`, drop-in compatible with anywhere it's used today)
 - `input/midi_listener.py` — `python-rtmidi`-based MIDI input, converts note/pitch-bend
   events into calls on a `SubGestureRecognizer` (style follows wolfson's
   `input/midi_listener.py`)
@@ -74,9 +89,12 @@ or something new — DESIGN.md §12) replaces it once the rest of the skeleton
   `Timeline`), `voice.py` (`Voice`), `generators.py` (the stub `chord_tone_generator`),
   `session.py` (`Session`, generation-mode dispatch, an injectable `Clock` so real-time
   pacing is testable without actually waiting).
-- `tests/test_recognizer.py`, `tests/test_song.py`, `tests/test_session.py` — no MIDI
-  hardware needed
+- `tests/test_recognizer.py`, `tests/test_gesture_vocabulary.py`, `tests/test_song.py`,
+  `tests/test_session.py` — no MIDI hardware needed
 - `listen.py` — small runnable script: live MIDI in, prints detected sub-gestures
+- `gesture/demo.py` — small runnable script: replays synthetic gesture sequences
+  (seed gestures, record + alias teaching) and prints what's recognised
+  (`python -m gesture.demo`)
 - `ensemble/demo.py` — small runnable script: generates a chart's worth of stub sax
   output and prints it (`python -m ensemble.demo`)
 
@@ -85,6 +103,7 @@ or something new — DESIGN.md §12) replaces it once the rest of the skeleton
 ```
 pip install -r requirements.txt
 python listen.py --port 0        # list ports with --list
+python -m gesture.demo           # no MIDI needed
 python -m ensemble.demo          # no MIDI needed
 pytest
 ```

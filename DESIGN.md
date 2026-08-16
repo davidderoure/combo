@@ -4,20 +4,27 @@ Status: design consolidated 2026-08-06. This document is the single source of tr
 for the design; individual decisions below supersede any earlier scattered notes.
 
 **Built so far**: the gesture sub-gesture layer (§9, ported from AGRP), the
-song/scenario data model (§3), and an ensemble skeleton MVP (§2/§4 — see
-[README.md](README.md)) — a thin `Voice`, a `Session` that steps a `Song` bar-by-bar
-into a symbolic `Timeline`, and machine-speed-vs-real-time pacing behind a single
-generation loop, proven end-to-end with a deliberately dumb `chord_tone_generator`
-stub. All with passing tests. **Not yet built even within §2/§4**: role assignment,
-same-instrument doubling and the register-split default, multi-human/multi-voice
-sessions, and tempo elasticity (§4.1/§4.2) — the MVP is one song, any number of
-AI-sourced stub voices, no roles, and a single fixed tempo for the whole song.
+song/scenario data model (§3), an ensemble skeleton MVP (§2/§4), and a gesture
+vocabulary composition layer MVP (§10.1/§10.2 — see [README.md](README.md)). The
+ensemble MVP is a thin `Voice`, a `Session` that steps a `Song` bar-by-bar into a
+symbolic `Timeline`, and machine-speed-vs-real-time pacing behind a single generation
+loop, proven end-to-end with a deliberately dumb `chord_tone_generator` stub. The
+gesture vocabulary MVP (`gesture/vocabulary.py`, `GestureRecognizer`) composes
+`SubGestureRecognizer`'s output into named `Gesture`s: two argument-less seed gestures
+(`handover()`, `reset_tempo()`), and the record/alias/pending teaching mechanism from
+§10.2 (a reserved begin/end marker pair, chosen for a checkable — not arbitrary —
+reason: see the module docstring). All with passing tests.
+**Not yet built even within these MVPs**: role assignment, same-instrument doubling
+and the register-split default, multi-human/multi-voice sessions, and tempo elasticity
+(§4.1/§4.2) within the ensemble skeleton; recognising *parameterised* gestures
+(`handover(target=…)`, `trade(unit=…)` — the data model can carry params, nothing
+populates them from raw playing yet) and §10.3's automatic inference of a genuinely new
+(non-aliased) taught meaning, within the gesture vocabulary layer.
 **Designed but not yet built at all**: accompaniment-listening (§5), drums (§7), the
-gesture vocabulary-establishment mechanisms (§10) and composition layer, the musical
-director and its two channels (§11), and the unified MIDI-only human input covering
-performer, director, and audience (§6). Note that `input/midi_listener.py` currently
-only wires up a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap against
-§2's multi-human principle, not a design decision; it needs to grow into one
+musical director and its two channels (§11), and the unified MIDI-only human input
+covering performer, director, and audience (§6). Note that `input/midi_listener.py`
+currently only wires up a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap
+against §2's multi-human principle, not a design decision; it needs to grow into one
 listener/recogniser pair per human voice, and eventually a room-mic path for the
 audience case (§6). See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
@@ -212,10 +219,13 @@ needed. That directly matches combo's input scope (§6).
   one instance per voice, tests passing. See [README.md](README.md) for what changed
   in porting (two confirmed bugs fixed, two more found and fixed, one accuracy
   improvement, one preserved-but-flagged behavioural quirk).
-- **Not yet built**: composing sequences of sub-gestures into the named higher-level
-  gesture vocabulary (runs vs. rips, up-down runs, forte-piano, etc.) — never finished
-  in AGRP, and now understood to be better approached empirically (§10) than by
-  hand-designing rules up front.
+- **Composition layer**: `gesture/vocabulary.py`'s `GestureRecognizer` composes
+  sequences of sub-gestures into named higher-level gestures (§10.1/§10.2 built —
+  the seed vocabulary and the record/alias/pending teaching mechanism; see §10 for
+  what's still not built within that). Never finished in AGRP; developed here
+  empirically-in-spirit rather than by hand-designing a full rule set up front — the
+  seed patterns are explicitly placeholders, same as `chord_tone_generator` was for
+  the ensemble skeleton.
 - These gestures were general call-and-response dialogue gestures in Voyager, not
   handover-specific — combo still needs to decide which gesture(s), or gesture+rest
   patterns, are handover triggers specifically vs. general responsive cues.
@@ -234,6 +244,13 @@ needed. That directly matches combo's input scope (§6).
 
 Three complementary mechanisms, not competing ones — build roughly in this order,
 since each rests on the previous one existing rather than starting from nothing.
+
+**Status**: 10.1 and 10.2 are built (`gesture/vocabulary.py`, tests passing) — but only
+their argument-less cases; recognising a parameterised gesture's *value*
+(`handover(target=bass)`, not just `handover()`) isn't built, since nothing in a raw
+sub-gesture stream supplies one yet, and §10.2's "genuinely new meaning" case is built
+only as far as storing the recorded-but-unresolved pattern (`pending`) — inferring what
+it means automatically is 10.3's territory. 10.3 itself remains fully open, as below.
 
 ### 10.1 Seeded
 
