@@ -7,6 +7,7 @@ from ensemble.listening import (
     pitch_range,
     synthetic_varying_density_generator,
 )
+from ensemble.director import DirectorSignal
 from ensemble.timeline import NoteEvent, Timeline
 
 
@@ -61,7 +62,8 @@ def test_beats_of_silence():
 def test_synthetic_varying_density_generator_cycles_busy_sparse_moderate():
     gen = synthetic_varying_density_generator(seed=1)
     empty = Timeline()
-    assert len(gen(None, 0, empty)) == 8  # busy
-    assert len(gen(None, 1, empty)) == 0  # sparse
-    assert len(gen(None, 2, empty)) == 2  # moderate
-    assert len(gen(None, 3, empty)) == 8  # cycle repeats
+    neutral = DirectorSignal()
+    assert len(gen(None, 0, empty, neutral)) == 8  # busy
+    assert len(gen(None, 1, empty, neutral)) == 0  # sparse
+    assert len(gen(None, 2, empty, neutral)) == 2  # moderate
+    assert len(gen(None, 3, empty, neutral)) == 8  # cycle repeats

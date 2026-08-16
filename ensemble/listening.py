@@ -10,10 +10,14 @@ nothing yet consumes the other three. Said plainly here rather than left implici
 """
 
 import random
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from .timeline import BEATS_PER_BAR, NoteEvent, Timeline
-from .voice import Generator
+
+if TYPE_CHECKING:
+    # Only for the return-type annotation below — a real (non-TYPE_CHECKING) import
+    # here would cycle: voice.py -> director.py -> listening.py -> voice.py.
+    from .voice import Generator
 
 
 def _events_for(timeline: Timeline, voice_id: str, since_beat: float, until_beat: float) -> List[NoteEvent]:
@@ -57,10 +61,12 @@ def beats_of_silence(timeline: Timeline, voice_id: str, until_beat: float) -> fl
 # an accompanist to react to when demonstrating duck/fill — this fixture alternates
 # busy/sparse/moderate bars on a 3-bar cycle so that behaviour is actually visible,
 # in both tests and ensemble/demo.py.
-def synthetic_varying_density_generator(seed: Optional[int] = None) -> Generator:
+def synthetic_varying_density_generator(seed: Optional[int] = None) -> "Generator":
     rng = random.Random(seed)
 
-    def generate(song, bar_index: int, timeline: Timeline) -> List[NoteEvent]:
+    def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
+        # `director_signal` isn't used here — this fixture exists purely to produce a
+        # controllable, varying density signal for testing/demonstrating listening.
         cycle = bar_index % 3
         if cycle == 0:
             offsets = [i * 0.5 for i in range(8)]  # busy: 8 hits/bar

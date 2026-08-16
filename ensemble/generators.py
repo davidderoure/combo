@@ -30,9 +30,9 @@ def chord_tone_generator(register: Tuple[int, int]) -> Generator:
     """Build a generator that plays root + fifth on beats 1 and 3 of every bar,
     voiced within the given (low, high) MIDI register."""
 
-    def generate(song, bar_index: int, timeline) -> List[NoteEvent]:
-        # `timeline` (prior bars, other voices) isn't used here — this stub doesn't
-        # listen to anything, unlike ensemble/comping.py.
+    def generate(song, bar_index: int, timeline, director_signal) -> List[NoteEvent]:
+        # `timeline` (prior bars) and `director_signal` (DESIGN.md §11) aren't used
+        # here — this stub doesn't listen to anything, unlike ensemble/comping.py.
         events: List[NoteEvent] = []
         for beat_offset in (0.0, 2.0):
             beat = bar_index * BEATS_PER_BAR + beat_offset

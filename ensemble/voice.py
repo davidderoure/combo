@@ -9,15 +9,18 @@ against (Phase 4+ in the build plan) — deliberately not included here.
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Callable, List, Optional, Tuple
 
+from .director import DirectorSignal
 from .timeline import NoteEvent, Timeline
 
 if TYPE_CHECKING:
     from song import Song
 
-# (song, bar_index, timeline-of-prior-bars) -> notes for that bar. The timeline lets a
-# voice listen to what other voices have already played (DESIGN.md §5) — see
-# ensemble/session.py for exactly what "prior" means and why.
-Generator = Callable[["Song", int, Timeline], List[NoteEvent]]
+# (song, bar_index, timeline-of-prior-bars, aggregated-director-signal) -> notes for
+# that bar. The timeline lets a voice listen to what other voices have already played
+# (DESIGN.md §5) — see ensemble/session.py for exactly what "prior" means and why. The
+# director signal is the same for every voice in a given bar (DESIGN.md §11); with no
+# Director configured it's the neutral default, so existing generators are unaffected.
+Generator = Callable[["Song", int, Timeline, DirectorSignal], List[NoteEvent]]
 
 
 @dataclass

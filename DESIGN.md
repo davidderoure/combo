@@ -5,8 +5,9 @@ for the design; individual decisions below supersede any earlier scattered notes
 
 **Built so far**: the gesture sub-gesture layer (§9, ported from AGRP), the
 song/scenario data model (§3), an ensemble skeleton MVP (§2/§4), a gesture vocabulary
-composition layer MVP (§10.1/§10.2), a rule-based drums voice (§7), and
-accompaniment-listening (§5 — see [README.md](README.md)). The ensemble MVP is a thin
+composition layer MVP (§10.1/§10.2), a rule-based drums voice (§7),
+accompaniment-listening (§5), and the musical director's dial channel (§11 — see
+[README.md](README.md)). The ensemble MVP is a thin
 `Voice`, a `Session` that steps a `Song` bar-by-bar into a symbolic `Timeline`, and
 machine-speed-vs-real-time pacing behind a single generation loop — proven multi-voice,
 not just single-voice, via `ensemble/demo.py` running the `chord_tone_generator` sax
@@ -23,8 +24,12 @@ seeded humanisation. Accompaniment-listening (`ensemble/listening.py`,
 snapshot of prior bars, not just `(song, bar_index)` — voices can now actually listen
 to each other; the concrete accompanist (`comping_generator`) ducks/fills/plays
 moderately based on a target voice's recent density, demonstrated against a synthetic
-varying-density fixture since the sax stub's density never varies. All with passing
-tests.
+varying-density fixture since the sax stub's density never varies. The director
+(`ensemble/director.py`) mirrors `Voice`/`Generator`'s shape (`Director`,
+`DirectorSource`); `comping_generator` shifts its thresholds with the aggregated
+intensity, and `ensemble_intensity_critic` derives that intensity by genuinely
+listening to the ensemble's own combined density — the first real "AI critic," not
+just a manually-supplied constant. All with passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, *multi-human* sessions specifically (multiple
 simultaneous AI voices already work — see above — the gap is live human input, not the
@@ -35,10 +40,11 @@ skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(u
 gesture vocabulary layer; real swing-timing (triplet-based ride) and generative/soloing
 behaviour within drums; "mirrored" builds near arc peaks and the same-register
 role-split default applied between two accompanists, within accompaniment-listening —
-both need machinery (`ArcController`, role assignment) that doesn't exist yet.
-**Designed but not yet built at all**: the musical director and its two channels
-(§11), and the unified MIDI-only human input covering performer, director, and
-audience (§6). Note that `input/midi_listener.py` currently
+both need machinery (`ArcController`, role assignment) that doesn't exist yet; within
+the director, a consumer for the gesture channel, batch-mode scoring, and live
+human/MIDI director input (§6).
+**Designed but not yet built at all**: the unified MIDI-only human input covering
+performer, director, and audience (§6). Note that `input/midi_listener.py` currently
 only wires up a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap against
 §2's multi-human principle, not a design decision; it needs to grow into one
 listener/recogniser pair per human voice, and eventually a room-mic path for the
@@ -400,6 +406,25 @@ aesthetic judgment). This generalises three previously-separate ideas into one
 component: the tune-level form controller (a planned trajectory), listening-driven
 transitions (nudging that plan from live cues), and batch song evaluation.
 
+- **Status**: the dial channel is built end-to-end (`ensemble/director.py`), tests
+  passing, with a real consumer — `comping_generator` (§5) actually shifts its
+  duck/fill thresholds in response to it, not just accepts and ignores it. The gesture
+  channel's *data model and aggregation* are built (`DirectorSignal` can carry a
+  `Gesture`, `aggregate_director_signals` handles it) but nothing consumes a
+  director-emitted gesture yet — it has nowhere to act until §4.1's runtime tempo and
+  §8's handover triggers are code, not just design. Batch-mode scoring and live
+  human/MIDI director input aren't attempted at all. `Director` deliberately mirrors
+  `Voice`'s shape (`id`, `source`, a per-bar callable) rather than inventing a new
+  pattern; `Session` gains a `directors` list alongside `voices`, aggregating one
+  signal per bar that every voice's generator receives — this is `ensemble`'s first
+  cross-package dependency (`ensemble.director` imports `Gesture` from
+  `gesture.vocabulary`), a real integration point, not a smell.
+- **AI critic sources are built, human ones aren't — same gap as human `Voice`s**:
+  `ensemble_intensity_critic` genuinely listens to the ensemble (averages
+  `listening.density()` across named voices) to produce an intensity signal, fulfilling
+  §11's "AI critic" language concretely. `constant_director_source` stands in for a
+  human at a fixed control position, for tests/demo — live human input follows once §6
+  exists, the same relationship human `Voice`s already have to live MIDI input (§2).
 - **Teacher is a purpose this role can serve, not a new role**: in rehearsal (§4, case
   3), a director slot can be occupied by, or configured for, teaching. Live tempo-
   tracking (§4.1) is the first concrete mechanism this motivates — the ensemble

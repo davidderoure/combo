@@ -25,9 +25,15 @@ TIMING_JITTER_BEATS = 0.02
 DEFAULT_VELOCITY = 65
 VELOCITY_JITTER = 8
 
-# notes/beat thresholds on the *target* voice's recent density
+# notes/beat thresholds on the *target* voice's recent density, at neutral director
+# intensity (0.5). DESIGN.md §11: the director's dial shifts both thresholds together
+# — higher intensity means comping tolerates a busier soloist before ducking *and* is
+# readier to fill at a given soloist density; lower intensity does the reverse. At
+# intensity=0.5 the shift is exactly zero, so behaviour is byte-identical to before
+# the director existed (Phase 4) — why this was safe to bolt on rather than rewrite.
 BUSY_THRESHOLD = 1.5  # at/above this, the soloist is busy -> duck (leave space)
 SPARSE_THRESHOLD = 0.25  # at/below this, the soloist has left space -> fill
+INTENSITY_SPREAD = 1.0  # notes/beat shift across the full 0..1 intensity range
 
 
 def _stab(chord, register: Tuple[int, int], bar_index: int, beat_offset: float, rng: random.Random) -> List[NoteEvent]:
@@ -59,18 +65,24 @@ def comping_generator(
     """Build a generator that listens to target_voice_id's density over the previous
     lookback_bars bars and responds complementarily. At bar_index < lookback_bars the
     window is empty -> density 0.0 -> fills by default (a harmless, expected edge
-    case, not a bug: nothing's been heard yet, so there's nothing to duck for)."""
+    case, not a bug: nothing's been heard yet, so there's nothing to duck for). Also
+    reads the director's aggregated intensity each bar (DESIGN.md §11) and shifts its
+    duck/fill thresholds accordingly — see INTENSITY_SPREAD above."""
     rng = random.Random(seed)
 
-    def generate(song, bar_index: int, timeline: Timeline) -> List[NoteEvent]:
+    def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
         since_beat = max(0, bar_index - lookback_bars) * BEATS_PER_BAR
         until_beat = bar_index * BEATS_PER_BAR
         target_density = density(timeline, target_voice_id, since_beat, until_beat)
         chord = song.chord_at(bar_index * BEATS_PER_BAR)
 
-        if target_density >= BUSY_THRESHOLD:
+        shift = (director_signal.intensity - 0.5) * INTENSITY_SPREAD
+        busy_threshold = BUSY_THRESHOLD + shift
+        sparse_threshold = SPARSE_THRESHOLD + shift
+
+        if target_density >= busy_threshold:
             return []  # duck
-        if target_density <= SPARSE_THRESHOLD:
+        if target_density <= sparse_threshold:
             return _stab(chord, register, bar_index, 0.0, rng) + _stab(chord, register, bar_index, 2.0, rng)
         return _stab(chord, register, bar_index, 0.0, rng)  # moderate
 

@@ -88,9 +88,9 @@ def drum_generator(seed: Optional[int] = None) -> Generator:
     (tests); omit for natural variation."""
     rng = random.Random(seed)
 
-    def generate(song, bar_index: int, timeline) -> List[NoteEvent]:
-        # `timeline` (prior bars, other voices) isn't used here — density is driven
-        # purely by section/form, not by listening to another voice.
+    def generate(song, bar_index: int, timeline, director_signal) -> List[NoteEvent]:
+        # `timeline` (prior bars) and `director_signal` (DESIGN.md §11) aren't used
+        # here — density is driven purely by section/form, not by listening.
         density = _density_for_bar(song, bar_index)
         if density == SPARSE:
             return _sparse_bar(bar_index, rng)

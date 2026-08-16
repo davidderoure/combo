@@ -12,7 +12,7 @@ recurring "tunes" of its own.
 
 ## Current status
 
-Early build-out, four pieces in so far. First: a **gesture recognition** layer for
+Early build-out, five pieces in so far. First: a **gesture recognition** layer for
 monophonic note streams (bass, sax, or any instrument via a pitch-to-MIDI tracker, e.g.
 a Sonuus i2M — but equally an AI voice's own generated output), so any performer, human
 or AI, can cue the ensemble — handovers, dialogue — using a small vocabulary of
@@ -99,6 +99,24 @@ stabs when it leaves space, plays one stab otherwise — demonstrated in
 `ensemble/demo.py` against a synthetic varying-density fixture rather than the sax
 stub, since `chord_tone_generator`'s output never varies in density at all.
 
+The fifth piece is the **musical director**'s dial channel (DESIGN.md §11,
+`ensemble/director.py`) — `Director`/`DirectorSource` deliberately mirror
+`Voice`/`Generator`'s shape rather than a new pattern, and `Session` now aggregates one
+`DirectorSignal` per bar (mean intensity across however many directors are configured,
+neutral by default) that every voice's generator receives as a fourth argument.
+`comping_generator` is the real consumer — its duck/fill thresholds shift with
+intensity, byte-identical to Phase 4's behaviour at the neutral default, so this was
+safe to bolt on rather than rewrite. `ensemble_intensity_critic` is a genuine, if
+simple, "AI critic" (DESIGN.md §11's own phrase): it derives intensity by listening to
+the ensemble's own combined density, not just accepting a manually-supplied constant —
+demonstrated in `ensemble/demo.py` reading back the sax+drums session from the first
+demo. The gesture channel's data model and aggregation are built (`DirectorSignal` can
+carry a `Gesture`) but have no consumer yet — a director-emitted `reset_tempo()` has
+nowhere to act until §4.1's runtime tempo and §8's handover triggers exist as code, said
+plainly in the module docstring and in the demo's own output rather than left implicit.
+Also unbuilt: batch-mode scoring and live human/MIDI director input (needs §6 first) —
+the same gap human `Voice`s already have relative to live MIDI, not a new one.
+
 ## Layout
 
 - `gesture/recognizer.py` — the ported sub-gesture state machine (no MIDI/IO deps)
@@ -120,18 +138,20 @@ stub, since `chord_tone_generator`'s output never varies in density at all.
   `drum_generator`, no ML), `listening.py` (DESIGN.md §5 — feature extraction:
   `density`, `pitch_range`, `average_velocity`, `beats_of_silence`, plus the
   `synthetic_varying_density_generator` test/demo fixture), `comping.py` (DESIGN.md
-  §5 — the concrete accompanist, `comping_generator`).
+  §5 — the concrete accompanist, `comping_generator`), `director.py` (DESIGN.md §11
+  — `DirectorSignal`, `Director`, `aggregate_director_signals`,
+  `constant_director_source`, `ensemble_intensity_critic`).
 - `tests/test_recognizer.py`, `tests/test_gesture_vocabulary.py`, `tests/test_song.py`,
   `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
-  `tests/test_comping.py` — no MIDI hardware needed
+  `tests/test_comping.py`, `tests/test_director.py` — no MIDI hardware needed
 - `listen.py` — small runnable script: live MIDI in, prints detected sub-gestures
 - `gesture/demo.py` — small runnable script: replays synthetic gesture sequences
   (seed gestures, record + alias teaching) and prints what's recognised
   (`python -m gesture.demo`)
 - `ensemble/demo.py` — small runnable script: generates a chart's worth of stub sax +
-  drums output and prints it, then a second, separate demonstration of comping's
-  duck/fill behaviour against a synthetic varying-density fixture
-  (`python -m ensemble.demo`)
+  drums output and prints it, then separate demonstrations of comping's duck/fill
+  behaviour and the director's intensity dial (low vs. high, plus the AI critic
+  reading the sax+drums session) (`python -m ensemble.demo`)
 
 ## Running
 

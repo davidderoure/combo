@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, List, Optional, Protocol
 
+from .director import Director, aggregate_director_signals
 from .timeline import BEATS_PER_BAR, Timeline
 from .voice import Voice
 
@@ -57,6 +58,7 @@ class FakeClock:
 class Session:
     song: "Song"
     voices: List[Voice] = field(default_factory=list)
+    directors: List[Director] = field(default_factory=list)
 
     def generate(self, mode: str = MACHINE_SPEED, clock: Optional[Clock] = None) -> Timeline:
         if mode not in (MACHINE_SPEED, REAL_TIME):
@@ -86,11 +88,22 @@ class Session:
             # over self.voices) — a copy, not the live timeline, so a generator can't
             # corrupt the loop by calling .add() on what it's handed (DESIGN.md §5).
             prior_bars = Timeline(list(timeline.events))
+
+            # One aggregated signal per bar, shared by every voice generating that
+            # bar (DESIGN.md §11). No directors configured -> aggregating [] ->
+            # the neutral default -> existing generators are unaffected.
+            signals = [
+                director.signal_source(self.song, bar_index, prior_bars)
+                for director in self.directors
+                if director.source == "ai"
+            ]
+            director_signal = aggregate_director_signals(signals)
+
             bar_events = []
             for voice in self.voices:
                 if voice.source != "ai":
                     continue
-                for event in voice.generator(self.song, bar_index, prior_bars):
+                for event in voice.generator(self.song, bar_index, prior_bars, director_signal):
                     bar_events.append(replace(event, voice_id=voice.id))
             for event in bar_events:
                 timeline.add(event)

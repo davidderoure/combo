@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from ensemble.comping import comping_generator
+from ensemble.director import DirectorSignal
 from ensemble.listening import synthetic_varying_density_generator
 from ensemble.session import Session
 from ensemble.timeline import BEATS_PER_BAR, NoteEvent, Timeline
@@ -29,7 +30,7 @@ def test_busy_target_density_ducks():
     gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
     since, _until = lookback_window(5)
     tl = Timeline([NoteEvent("sax", 60, 80, since + i * 0.5, 0.1) for i in range(16)])  # 2.0 notes/beat
-    assert gen(song, 5, tl) == []
+    assert gen(song, 5, tl, DirectorSignal()) == []
 
 
 def test_sparse_target_density_fills_with_two_stabs():
@@ -37,7 +38,7 @@ def test_sparse_target_density_fills_with_two_stabs():
     gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
     since, _until = lookback_window(5)
     tl = Timeline([NoteEvent("sax", 60, 80, since, 0.1)])  # 0.125 notes/beat
-    events = gen(song, 5, tl)
+    events = gen(song, 5, tl, DirectorSignal())
     assert len(events) == 4  # two stabs, root+fifth each
     chord = song.chord_at(5 * BEATS_PER_BAR)
     for e in events:
@@ -49,15 +50,37 @@ def test_moderate_target_density_plays_one_stab():
     gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
     since, _until = lookback_window(5)
     tl = Timeline([NoteEvent("sax", 60, 80, since + i * 2.0, 0.1) for i in range(4)])  # 0.5 notes/beat
-    events = gen(song, 5, tl)
+    events = gen(song, 5, tl, DirectorSignal())
     assert len(events) == 2  # one stab, root+fifth
 
 
 def test_empty_history_fills_by_default():
     song = load_blues()
     gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
-    events = gen(song, 0, Timeline())  # bar_index < lookback_bars -> empty window
+    events = gen(song, 0, Timeline(), DirectorSignal())  # bar_index < lookback_bars -> empty window
     assert len(events) == 4
+
+
+def test_low_director_intensity_pushes_a_moderate_density_to_duck():
+    song = load_blues()
+    gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
+    since, _until = lookback_window(5)
+    # 11 notes / 8 beats = 1.375 notes/beat: moderate at neutral intensity (< 1.5)
+    tl = Timeline([NoteEvent("sax", 60, 80, since + i * (8 / 11), 0.1) for i in range(11)])
+
+    assert len(gen(song, 5, tl, DirectorSignal(intensity=0.5))) == 2  # neutral -> moderate
+    assert gen(song, 5, tl, DirectorSignal(intensity=0.0)) == []  # low intensity -> duck
+
+
+def test_high_director_intensity_pushes_a_moderate_density_to_fill():
+    song = load_blues()
+    gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
+    since, _until = lookback_window(5)
+    # 3 notes / 8 beats = 0.375 notes/beat: moderate at neutral intensity (> 0.25)
+    tl = Timeline([NoteEvent("sax", 60, 80, since + i * (8 / 3), 0.1) for i in range(3)])
+
+    assert len(gen(song, 5, tl, DirectorSignal(intensity=0.5))) == 2  # neutral -> moderate
+    assert len(gen(song, 5, tl, DirectorSignal(intensity=1.0))) == 4  # high intensity -> fill
 
 
 def test_voice_order_does_not_affect_output():
@@ -89,7 +112,7 @@ def test_voice_order_does_not_affect_output():
 def test_generator_cannot_corrupt_the_session_timeline():
     song = load_blues()
 
-    def naughty_generator(song, bar_index, timeline):
+    def naughty_generator(song, bar_index, timeline, director_signal):
         timeline.add(NoteEvent("intruder", 999, 999, -1.0, 0.1))
         return []
 
