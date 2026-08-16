@@ -9,16 +9,30 @@ import argparse
 import time
 from pathlib import Path
 
-from ensemble import MACHINE_SPEED, REAL_TIME, Session, Voice, chord_tone_generator
+from ensemble import MACHINE_SPEED, REAL_TIME, Session, Voice, chord_tone_generator, drum_generator
+from ensemble.drums import ACOUSTIC_SNARE, CLOSED_HI_HAT, RIDE_CYMBAL_1
 from song import parse_chart
 
 DEFAULT_CHART = Path(__file__).resolve().parent.parent / "songs" / "blues_in_f.chart"
 SAX_REGISTER = (55, 79)
+DRUM_REGISTER = (35, 59)  # not musically meaningful for percussion, kept for Voice's shape
+
+GM_PERCUSSION_NAMES = {
+    ACOUSTIC_SNARE: "Snare",
+    CLOSED_HI_HAT: "HiHat",
+    RIDE_CYMBAL_1: "Ride",
+}
 
 
 def note_name(pitch: int) -> str:
     names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     return f"{names[pitch % 12]}{pitch // 12 - 1}"
+
+
+def event_label(event) -> str:
+    if event.voice_id == "drums":
+        return GM_PERCUSSION_NAMES.get(event.pitch, str(event.pitch))
+    return note_name(event.pitch)
 
 
 def main() -> None:
@@ -37,7 +51,14 @@ def main() -> None:
         source="ai",
         generator=chord_tone_generator(SAX_REGISTER),
     )
-    session = Session(song=song, voices=[sax])
+    drums = Voice(
+        id="drums",
+        instrument="drums",
+        register=DRUM_REGISTER,
+        source="ai",
+        generator=drum_generator(seed=42),
+    )
+    session = Session(song=song, voices=[sax, drums])
 
     started = time.time()
     timeline = session.generate(mode=args.mode)
@@ -47,7 +68,7 @@ def main() -> None:
         chord = song.chord_at(event.start_beat)
         print(
             f"beat {event.start_beat:6.1f}  {chord!s:>6}  "
-            f"{event.voice_id:>4}  {note_name(event.pitch):>4}  vel={event.velocity}"
+            f"{event.voice_id:>5}  {event_label(event):>5}  vel={event.velocity}"
         )
 
     print(f"\n{len(timeline)} events, {elapsed:.2f}s wall-clock ({args.mode})")

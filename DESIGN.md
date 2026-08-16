@@ -4,27 +4,35 @@ Status: design consolidated 2026-08-06. This document is the single source of tr
 for the design; individual decisions below supersede any earlier scattered notes.
 
 **Built so far**: the gesture sub-gesture layer (§9, ported from AGRP), the
-song/scenario data model (§3), an ensemble skeleton MVP (§2/§4), and a gesture
-vocabulary composition layer MVP (§10.1/§10.2 — see [README.md](README.md)). The
-ensemble MVP is a thin `Voice`, a `Session` that steps a `Song` bar-by-bar into a
-symbolic `Timeline`, and machine-speed-vs-real-time pacing behind a single generation
-loop, proven end-to-end with a deliberately dumb `chord_tone_generator` stub. The
-gesture vocabulary MVP (`gesture/vocabulary.py`, `GestureRecognizer`) composes
-`SubGestureRecognizer`'s output into named `Gesture`s: two argument-less seed gestures
-(`handover()`, `reset_tempo()`), and the record/alias/pending teaching mechanism from
-§10.2 (a reserved begin/end marker pair, chosen for a checkable — not arbitrary —
-reason: see the module docstring). All with passing tests.
+song/scenario data model (§3), an ensemble skeleton MVP (§2/§4), a gesture vocabulary
+composition layer MVP (§10.1/§10.2), and a rule-based drums voice (§7 — see
+[README.md](README.md)). The ensemble MVP is a thin `Voice`, a `Session` that steps a
+`Song` bar-by-bar into a symbolic `Timeline`, and machine-speed-vs-real-time pacing
+behind a single generation loop — proven multi-voice, not just single-voice, via
+`ensemble/demo.py` running the `chord_tone_generator` sax stub alongside the drums
+voice together over `blues_in_f.chart`. The gesture vocabulary MVP
+(`gesture/vocabulary.py`, `GestureRecognizer`) composes `SubGestureRecognizer`'s output
+into named `Gesture`s: two argument-less seed gestures (`handover()`, `reset_tempo()`),
+and the record/alias/pending teaching mechanism from §10.2 (a reserved begin/end
+marker pair, chosen for a checkable — not arbitrary — reason: see the module
+docstring). Drums (`ensemble/drums.py`, `drum_generator`) are section-aware via
+`Song.section_at` (sparse under head/out, medium by default, busy on a section's last
+chorus) with honestly-flagged discrete-hits-not-continuous-brushes and seeded
+humanisation. All with passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
-and the register-split default, multi-human/multi-voice sessions, and tempo elasticity
-(§4.1/§4.2) within the ensemble skeleton; recognising *parameterised* gestures
-(`handover(target=…)`, `trade(unit=…)` — the data model can carry params, nothing
-populates them from raw playing yet) and §10.3's automatic inference of a genuinely new
-(non-aliased) taught meaning, within the gesture vocabulary layer.
-**Designed but not yet built at all**: accompaniment-listening (§5), drums (§7), the
-musical director and its two channels (§11), and the unified MIDI-only human input
-covering performer, director, and audience (§6). Note that `input/midi_listener.py`
-currently only wires up a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap
-against §2's multi-human principle, not a design decision; it needs to grow into one
+and the register-split default, *multi-human* sessions specifically (multiple
+simultaneous AI voices already work — see above — the gap is live human input, not the
+session/voice architecture), and tempo elasticity (§4.1/§4.2) within the ensemble
+skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
+— the data model can carry params, nothing populates them from raw playing yet) and
+§10.3's automatic inference of a genuinely new (non-aliased) taught meaning, within the
+gesture vocabulary layer; real swing-timing (triplet-based ride) and generative/soloing
+behaviour within drums.
+**Designed but not yet built at all**: accompaniment-listening (§5), the musical
+director and its two channels (§11), and the unified MIDI-only human input covering
+performer, director, and audience (§6). Note that `input/midi_listener.py` currently
+only wires up a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap against
+§2's multi-human principle, not a design decision; it needs to grow into one
 listener/recogniser pair per human voice, and eventually a room-mic path for the
 audience case (§6). See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
@@ -195,6 +203,26 @@ data. Generative/soloing drums are an explicit later phase, reusing the trading-
 engine but substituting kit-voice + density contour for pitch contour as the
 "melodic" analogue — a drum solo needs its own stand-in for phrase shape since drums
 don't have pitch contour in the same sense a horn line does.
+
+- **Status**: built (`ensemble/drums.py`, `drum_generator`), tests passing, and wired
+  into `ensemble/demo.py` as a second voice alongside the sax stub — the first genuine
+  multi-voice run of the ensemble.
+- **"Brushes," honestly**: a real brush pattern is continuous sweeping texture on the
+  snare, not discrete note onsets — `NoteEvent` (pitch + start time + duration) can't
+  represent that at all, not even approximately. What's built is brushes-in-spirit,
+  using discrete hi-hat/ride/snare hits closer to what a stick-based comping pattern
+  would produce. Genuine continuous texture would need a different kind of event than
+  `NoteEvent` — a real, structural gap, not a "doesn't sound good yet" one like
+  `chord_tone_generator`'s.
+- **Section-aware density**, reusing `Song.section_at` (§3) directly, no new machinery
+  needed: sparse (hi-hat on 2 and 4 only) under any section named "head" or "out";
+  medium (adds a plain-quarters walking ride — real swing ride's triplet-based
+  "spang-a-lang" feel is deferred to a real swing-timing pass) as the default; busy
+  (adds syncopated snare accents) on the *last* chorus of a multi-chorus section,
+  standing in for "approaching a peak" since there's no `ArcController` yet to ask
+  directly.
+- Humanised via a seeded `random.Random` — deterministic under test, naturally varied
+  live.
 
 ## 8. Handover / transition triggers
 

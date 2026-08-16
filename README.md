@@ -12,7 +12,7 @@ recurring "tunes" of its own.
 
 ## Current status
 
-Early build-out. First piece under construction: a **gesture recognition** layer for
+Early build-out, three pieces in so far. First: a **gesture recognition** layer for
 monophonic note streams (bass, sax, or any instrument via a pitch-to-MIDI tracker, e.g.
 a Sonuus i2M — but equally an AI voice's own generated output), so any performer, human
 or AI, can cue the ensemble — handovers, dialogue — using a small vocabulary of
@@ -59,7 +59,7 @@ arrive from a live MIDI port or are generated in-process by an AI voice, so an A
 voice's own output can be fed through the same recogniser without any extra bridging
 code, just by calling those methods directly instead of going through `MidiListener`.
 
-The second piece under construction is the **ensemble skeleton** (DESIGN.md §2/§4): a
+The second piece is the **ensemble skeleton** (DESIGN.md §2/§4): a
 thin `Voice` (id, instrument, register, human-or-AI source) driving a `Session` that
 steps a `Song` bar-by-bar and merges each AI-sourced voice's output into one symbolic
 `Timeline` — notes tagged by beat position, not wall-clock time. Generation mode only
@@ -70,7 +70,17 @@ listening, not on this code). `ensemble/generators.py`'s `chord_tone_generator` 
 deliberately dumb placeholder (root + fifth on beats 1 and 3) whose only job is proving
 the pipeline end-to-end; real generation (an adapted Wolfson model, DYCI2/Dicy2-python,
 or something new — DESIGN.md §12) replaces it once the rest of the skeleton
-(accompaniment-listening, the director, drums) is built and proven against it.
+(accompaniment-listening, the director) is built and proven against it.
+
+The third piece is **drums** (DESIGN.md §7, `ensemble/drums.py`), a rule-based pattern
+engine rather than a trained model (WJazzD has no drum data) — no ML, just another
+`Voice`'s generator, reusing `Song.section_at` for section-aware density (sparse under
+the head/out, busier toward the end of a section, standing in for "approaching a peak"
+until there's a real `ArcController` to ask). Worth being explicit that "brushes"
+(DESIGN.md §7's word) is approximated here as discrete hi-hat/ride/snare hits — a real
+brush pattern is continuous sweeping texture that `NoteEvent` genuinely can't
+represent, not just something this stub plays badly. `ensemble/demo.py` now runs the
+sax stub and drums together, the first real multi-voice run of the ensemble.
 
 ## Layout
 
@@ -88,15 +98,16 @@ or something new — DESIGN.md §12) replaces it once the rest of the skeleton
 - `ensemble/` — the ensemble skeleton (DESIGN.md §2/§4): `timeline.py` (`NoteEvent`,
   `Timeline`), `voice.py` (`Voice`), `generators.py` (the stub `chord_tone_generator`),
   `session.py` (`Session`, generation-mode dispatch, an injectable `Clock` so real-time
-  pacing is testable without actually waiting).
+  pacing is testable without actually waiting), `drums.py` (DESIGN.md §7 — rule-based,
+  section-aware `drum_generator`, no ML).
 - `tests/test_recognizer.py`, `tests/test_gesture_vocabulary.py`, `tests/test_song.py`,
-  `tests/test_session.py` — no MIDI hardware needed
+  `tests/test_session.py`, `tests/test_drums.py` — no MIDI hardware needed
 - `listen.py` — small runnable script: live MIDI in, prints detected sub-gestures
 - `gesture/demo.py` — small runnable script: replays synthetic gesture sequences
   (seed gestures, record + alias teaching) and prints what's recognised
   (`python -m gesture.demo`)
-- `ensemble/demo.py` — small runnable script: generates a chart's worth of stub sax
-  output and prints it (`python -m ensemble.demo`)
+- `ensemble/demo.py` — small runnable script: generates a chart's worth of stub sax +
+  drums output and prints it (`python -m ensemble.demo`)
 
 ## Running
 
