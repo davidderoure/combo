@@ -113,6 +113,19 @@ each bar rather than computed once at the start of generation. A tempo gesture �
 producer writing to that same dial; no new mechanism needed beyond what's already
 planned for the director and the seeded vocabulary.
 
+**Three sources can feed the tempo dial**, none needing new architecture beyond what's
+already planned: the song's nominal tempo (the default); an explicit gesture
+nudge/reset (above); and — prompted by David's rehearsal/teaching question below —
+**tempo tracked live from a performer's actual note-onset timing**, extending §5's
+accompaniment-listening feature extraction (which already reads live density/register/
+dynamics) to also read timing. This is really Wolfson's original beat-sync mechanism
+(aligning a proactive phrase to the bassist's actual beat) generalised from a one-off
+alignment into a continuously tracked tempo. It's smaller and nearer-term than §4.2's
+full free-time stretch goal, and covers a lot of the same practical ground for this
+specific case: a learner deliberately playing slowly doesn't need the ensemble to
+abandon the clock entirely, just to have the clock's rate genuinely follow them instead
+of sitting fixed at the song's nominal tempo.
+
 ### 4.2 Free time (stretch goal, captured now so it shapes nearer-term decisions)
 
 A sharper version of the same question: can a stretch of playing come off the pulse
@@ -312,6 +325,13 @@ aesthetic judgment). This generalises three previously-separate ideas into one
 component: the tune-level form controller (a planned trajectory), listening-driven
 transitions (nudging that plan from live cues), and batch song evaluation.
 
+- **Teacher is a purpose this role can serve, not a new role**: in rehearsal (§4, case
+  3), a director slot can be occupied by, or configured for, teaching. Live tempo-
+  tracking (§4.1) is the first concrete mechanism this motivates — the ensemble
+  adapting to a learner playing slowly, rather than the learner having to keep up with
+  a fixed nominal tempo — and it needs no new architecture beyond what §11 already has.
+  Other teaching-specific behaviour (patience, simplified accompaniment, practice
+  loops) is a later question, deliberately not specified now.
 - **Two channels, not one**: the **dial** (continuous, ambient — intensity, closeness
   to arc resolution) sits alongside the **same gesture vocabulary** every performer
   shares (§9/§10) for discrete, structural decisions — an explicit "let's trade fours"
