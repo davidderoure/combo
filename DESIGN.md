@@ -9,8 +9,9 @@ song/scenario data model (§3), and an ensemble skeleton MVP (§2/§4 — see
 into a symbolic `Timeline`, and machine-speed-vs-real-time pacing behind a single
 generation loop, proven end-to-end with a deliberately dumb `chord_tone_generator`
 stub. All with passing tests. **Not yet built even within §2/§4**: role assignment,
-same-instrument doubling and the register-split default, and multi-human/multi-voice
-sessions — the MVP is one song, any number of AI-sourced stub voices, no roles yet.
+same-instrument doubling and the register-split default, multi-human/multi-voice
+sessions, and tempo elasticity (§4.1/§4.2) — the MVP is one song, any number of
+AI-sourced stub voices, no roles, and a single fixed tempo for the whole song.
 **Designed but not yet built at all**: accompaniment-listening (§5), drums (§7), the
 gesture vocabulary-establishment mechanisms (§10) and composition layer, the musical
 director and its two channels (§11), and the unified MIDI-only human input covering
@@ -97,6 +98,41 @@ Architecturally this means generation should produce a symbolic timeline (notes 
 with beat position/duration, not wall-clock time), with playback/scheduling as a
 separate stage — only that later stage needs to know whether a human occupies any role
 right now (return the result immediately, or pace to real time).
+
+### 4.1 Tempo is a runtime value, not a fixed constant
+
+The current MVP (`ensemble/session.py`'s `Session.generate`) paces real-time mode off a
+single `song.tempo_bpm` fixed for the whole song — deliberately rigid, since Phase 1
+was only about proving the pacing mechanism worked at all, not about musical
+elasticity. The intended direction, prompted by David asking how rigid the pulse
+should be (combo has a deliberate pulse; Wolfson never did — its timing was always
+derived from phrases, never clock-driven): tempo, and tempo nudges (a push, a rit., a
+snap back to nominal), should be one of the director's dial parameters (§11), read live
+each bar rather than computed once at the start of generation. A tempo gesture —
+`reset_tempo()`, alongside §10.1's `handover`/`trade` frames — is then just another
+producer writing to that same dial; no new mechanism needed beyond what's already
+planned for the director and the seeded vocabulary.
+
+### 4.2 Free time (stretch goal, captured now so it shapes nearer-term decisions)
+
+A sharper version of the same question: can a stretch of playing come off the pulse
+*entirely*, not just have its rate nudged — genuinely phrase-derived timing for a
+passage, the way Wolfson always worked, rejoining the pulse later? Not being built now,
+but worth capturing because it's a different axis from §4.1 above (that's "is the
+clock's rate steady"; this is "is there a clock running at all"), and conflating them
+risks shaping the tempo-dial mechanism in a way that can't later accommodate a
+genuinely clock-free stretch.
+
+- **Real precedent this isn't unusually ambitious**: ImproteK's real-time architecture
+  (§12) already syncs its audio rendering "with a non-metronomic beat" — a live,
+  elastic pulse, not a fixed click. This is a solved problem elsewhere, not
+  speculative.
+- **Likely shape**: a per-section property in the form (§3) — "free time" vs. "in
+  time," the same way real charts already notate a rubato intro. A free section
+  advances on phrase/gesture completion (closer to how Wolfson actually worked) rather
+  than fixed beat-interval pacing; a resolving gesture or structural landmark is what
+  snaps the ensemble back onto the pulse — the same handover-style gesture mechanism
+  as §8, just triggering a return to clock time instead of a role change.
 
 ## 5. Accompaniment-listening
 
@@ -202,6 +238,9 @@ start, and worth noticing these span two different shapes:
   flat list gives the emergent-grammar work (§10.3) real compositional structure to
   extend later — directly analogous to the "groups" with roles and an order constraint
   that Steels' agents built up from repeated two-word combinations.
+- A **tempo gesture** — `reset_tempo()` at minimum, possibly a push/pull pair — belongs
+  in this same seed set (§4.1): it's a plain signal like the handover example above,
+  just writing to the director's tempo dial instead of triggering a role change.
 
 ### 10.2 Taught
 
@@ -282,11 +321,11 @@ transitions (nudging that plan from live cues), and batch song evaluation.
   everyone else (§6) — it isn't a separate mechanism bolted on.
 - **Dial nudge mechanism, decided**: dial-based, not directive, for the continuous
   channel specifically. The director adjusts a small set of shared parameters (e.g. an
-  intensity/density target) that voice-generators read and interpret individually —
-  composes with the per-voice accompaniment-listening model (§5) rather than
-  overriding it, and avoids the director becoming a single point of micromanagement.
-  (The gesture channel above is deliberately more directive — that's fine, it's playing
-  the same role an explicit human cue does.)
+  intensity/density target, or **tempo** — §4.1) that voice-generators read and
+  interpret individually — composes with the per-voice accompaniment-listening model
+  (§5) rather than overriding it, and avoids the director becoming a single point of
+  micromanagement. (The gesture channel above is deliberately more directive — that's
+  fine, it's playing the same role an explicit human cue does.)
 - **Also the answer to §10.3's hard problem**: a live director's real-time input is a
   genuine ground-truth preference signal for reinforcing or abandoning gesture-meaning
   pairings — stronger than any proxy we'd otherwise have to invent.
