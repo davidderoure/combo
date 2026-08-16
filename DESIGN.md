@@ -7,13 +7,15 @@ for the design; individual decisions below supersede any earlier scattered notes
 song/scenario data model (§3) — both with passing tests, see [README.md](README.md).
 **Designed but not yet built**: everything else below — voice/role architecture (§2),
 generation modes (§4), accompaniment-listening (§5), drums (§7), the gesture
-composition layer and its possible emergence (§9-10), the musical director (§11). Note
-that `input/midi_listener.py` currently only wires up a single MIDI port
-(`config.MIDI_INPUT_PORT`) — a concrete gap against §2's multi-human principle, not a
-design decision; it needs to grow into one listener/recogniser pair per human voice.
+vocabulary-establishment mechanisms (§10) and composition layer, the musical director
+and its two channels (§11), and the unified MIDI-only human input covering performer,
+director, and audience (§6). Note that `input/midi_listener.py` currently only wires up
+a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap against §2's multi-human
+principle, not a design decision; it needs to grow into one listener/recogniser pair
+per human voice, and eventually a room-mic path for the audience case (§6).
 **Open research questions, not yet answered**: can sub-gesture sequences compose into
-a genuine gesture grammar rather than a hand-authored one (§10); can the system
-develop and recall recurring "tunes" of its own (§4, §9).
+a genuine gesture grammar rather than a hand-authored one (§10.3); can the system
+develop and recall recurring "tunes" of its own (§1, §4).
 
 ## 1. Vision
 
@@ -99,12 +101,28 @@ symmetrically regardless of whether the accompanied voice is human or AI. The
 same-register role-split default (§2) is this same complementary logic applied
 laterally, between two accompanists, not just between accompanist and soloist.
 
-## 6. Human input: monophonic pitch-tracked MIDI only
+## 6. Human input: everything through MIDI, no control panels or apps
 
-Scoped deliberately to a monophonic pitch-to-MIDI tracker (e.g. a Sonuus i2M) on bass,
-sax, or any monophonic instrument — polyphonic/keyboard chord input is explicitly out
-of scope, a much harder and separate problem. Any human-occupied voice uses this same
-input path regardless of which instrument they're playing.
+One principle covers every role: all human interaction with combo — performer,
+director, audience — goes through MIDI (a pitch-tracked voice/instrument, or a MIDI
+keyboard/controller), never a bespoke control panel or app.
+
+- **Performer**: a monophonic pitch-to-MIDI tracker (e.g. a Sonuus i2M) on bass, sax,
+  voice, or any monophonic instrument. Polyphonic/keyboard **chord** input is
+  explicitly out of scope here — extracting a musical line from chords is a much
+  harder, separate problem (§13). Any human-occupied voice uses this same input path
+  regardless of which instrument they're playing.
+- **Director**: a MIDI keyboard or controller, read as discrete note/CC values mapped
+  to the shared dial parameters (§11). This is a trivial use of keyboard MIDI — reading
+  control values, not extracting a melodic line — so it doesn't reopen the chord-input
+  exclusion above; the two are different problems that happen to share hardware. No
+  dedicated fader/knob box needed.
+- **Audience**: no phone app (supersedes the earlier Mood-Conductor-style deferral,
+  §13) — a room/ambient microphone through the same pitch-tracker-to-gesture pipeline
+  already built for a single performer (§9), treated as one aggregate voice feeding the
+  director's aggregation stage (§11). Reuses the existing architecture entirely; the
+  audience isn't a new subsystem, just another source for machinery that already
+  exists.
 
 ## 7. Drums
 
@@ -156,11 +174,59 @@ needed. That directly matches combo's input scope (§6).
   gesture — adopted for later performances after AGRP. It's a poorer fit for combo's
   monophonic-MIDI-only scope than AGRP's approach, which needs no raw audio pipeline.
 
-## 10. Could the gesture vocabulary itself emerge, rather than being authored?
+## 10. Establishing the gesture vocabulary
+
+Three complementary mechanisms, not competing ones — build roughly in this order,
+since each rests on the previous one existing rather than starting from nothing.
+
+### 10.1 Seeded
+
+A small starter set of gestures with designer-assigned meanings, present from day one
+(as Lewis's Voyager score, or AGRP's hard-coded eight, were). Worth having from the
+start, and worth noticing these span two different shapes:
+
+- Plain signals, no argument — e.g. "I'm finishing now, handing over": the form
+  controller's existing role-assignment logic picks who receives it.
+- **Parameterised frames**, not flat symbols — e.g. "...handing over to a bass
+  solo..." is really `handover(target=bass)`; "let's play fours" is
+  `trade(unit=fours)` (a proposal to change the *form*, §3/§8, not a handover at all,
+  with a parameter on the trading unit — fours, vs. twos, vs. eights). Seeding with a
+  handful of small two-slot frames (action + target/parameter) rather than a longer
+  flat list gives the emergent-grammar work (§10.3) real compositional structure to
+  extend later — directly analogous to the "groups" with roles and an order constraint
+  that Steels' agents built up from repeated two-word combinations.
+
+### 10.2 Taught
+
+The thing AGRP could have done but never built: a human teaches a new gesture, ahead of
+a session or live, entirely through playing — no separate control panel, per §6.
+
+- **Mechanism**: a reserved "begin-record" gesture, followed by the new material,
+  followed by a reserved "end-record" gesture — implemented entirely on top of the
+  existing `SubGestureRecognizer` pipeline, no new subsystem. Works identically whether
+  it happens in a pre-concert teaching session or mid-performance.
+- **Teaching by alias**: following end-record immediately with an *existing* known
+  gesture means "this new thing means the same as that" — no naming or labelling step
+  needed at all, entirely musical.
+- **Teaching a genuinely new meaning** (not an alias): recording without a following
+  known gesture gives a tightly scoped window ("a new definition is happening right
+  now") rather than a label — the meaning still has to be inferred from what happens
+  structurally right after, across a few repetitions. Much more tractable than the
+  fully unscoped version of this problem (§10.3), because the record markers narrow
+  down *when* a new definition is being attempted, not just *that* one might be.
+- **Risk to design around**: the begin/end markers need to be gestures unlikely to
+  occur by accident during normal playing — the same "wake word" problem voice
+  assistants have. Choose something deliberately distinctive for those two, not
+  anything already in the working vocabulary.
+- The director can teach and cue this way too, not just through the dial channel —
+  see §11's note on the two-channel director.
+
+### 10.3 Emergent
 
 Prompted by Luc Steels' language-game work (Steels 1998, 2000 — robot populations
 bootstrapping a shared lexicon and then rudimentary grammar through repeated
-interaction, no central design). Concrete mapping onto combo, not yet built:
+interaction, no central design, no explicit teaching). The harder, longest-run
+mechanism of the three — rests on 10.1 and 10.2 already existing:
 
 - **AGRP's fixed sub-gesture thresholds are already, literally, a hand-built
   discrimination game** (Steels' term for carving a continuous feature space into
@@ -181,8 +247,8 @@ interaction, no central design). Concrete mapping onto combo, not yet built:
 - **Theoretical framing, useful if this is ever written up**: Steels frames this as a
   "Complex Adaptive Systems" account of language (meaning emerges from repeated
   interaction, never in a steady state), explicitly against Chomskyan Universal Grammar
-  (fixed, innate). combo's gesture vocabulary — and its emergent-tunes idea (§9 in the
-  memory, effectively "the same principle applied to whole songs") — both sit in this
+  (fixed, innate). combo's gesture vocabulary — and its emergent-tunes idea (§1/§4,
+  effectively "the same principle applied to whole songs") — both sit in this
   camp. It's a third lineage distinct from the Voyager/Lewis tradition (fixed,
   hand-scored vocabulary) and the IRCAM/DYCI2 tradition (memory-navigation, §12).
   George Lewis himself is independently interested in how gestures might form — worth
@@ -200,35 +266,40 @@ aesthetic judgment). This generalises three previously-separate ideas into one
 component: the tune-level form controller (a planned trajectory), listening-driven
 transitions (nudging that plan from live cues), and batch song evaluation.
 
-- **Nudge mechanism, decided**: dial-based, not directive. The director adjusts a
-  small set of shared parameters (e.g. an intensity/density target, closeness to arc
-  resolution) that voice-generators read and interpret individually — composes with
-  the per-voice accompaniment-listening model (§5) rather than overriding it, and
-  avoids the director becoming a single point of micromanagement.
-- **Also the answer to §10's hard problem**: a live director's real-time input is a
+- **Two channels, not one**: the **dial** (continuous, ambient — intensity, closeness
+  to arc resolution) sits alongside the **same gesture vocabulary** every performer
+  shares (§9/§10) for discrete, structural decisions — an explicit "let's trade fours"
+  or handover cue, not just a gradual nudge. Mirrors how a real bandleader mostly
+  shapes energy continuously but occasionally gives an explicit cue. The director is
+  just another participant that can emit and recognise gesture events, same channel as
+  everyone else (§6) — it isn't a separate mechanism bolted on.
+- **Dial nudge mechanism, decided**: dial-based, not directive, for the continuous
+  channel specifically. The director adjusts a small set of shared parameters (e.g. an
+  intensity/density target) that voice-generators read and interpret individually —
+  composes with the per-voice accompaniment-listening model (§5) rather than
+  overriding it, and avoids the director becoming a single point of micromanagement.
+  (The gesture channel above is deliberately more directive — that's fine, it's playing
+  the same role an explicit human cue does.)
+- **Also the answer to §10.3's hard problem**: a live director's real-time input is a
   genuine ground-truth preference signal for reinforcing or abandoning gesture-meaning
   pairings — stronger than any proxy we'd otherwise have to invent.
 - **Director is itself multi-instance and source-agnostic**, exactly like voices: N
   director "slots," each producing the same signal type, whether the source is a human
-  at a control surface or an AI critic computing it from listening to the ensemble. An
-  **aggregation stage** combines however many active director signals are present into
-  the single effective dial-state voice-generators read — start simple (e.g. a
-  weighted average), designed as a swappable piece so it can grow into something
-  richer (e.g. clustering, if this ever scales toward many simultaneous listeners).
-- **No app**: a human director is driven through the same MIDI infrastructure combo
-  already uses (`python-rtmidi`) — a small physical control surface (fader/knob box,
-  or a couple of MIDI CC controls) mapped to the shared dial parameters, not a web/
-  phone layer. A human director and an AI director produce the same signal type
-  through different sources; no separate code path.
+  (via §6's MIDI keyboard/controller or room mic) or an AI critic computing it from
+  listening to the ensemble. An **aggregation stage** combines however many active
+  director signals are present into the single effective dial-state voice-generators
+  read — start simple (e.g. a weighted average), designed as a swappable piece so it
+  can grow into something richer (e.g. clustering) if this scales toward many
+  simultaneous listeners.
 - **Real prior art David performed with live**: Mood Conductor (Fazekas, Barthet,
   Sandler, QMUL, ACII 2013) — an audience, via a phone web app, marks a target mood on
   a 2D arousal-valence plane; responses are clustered in real time into "emotion blobs"
   shown to performers as live guidance. "Conductor" is explicitly metaphorical there
   too. Open Symphony (same group) is a related/successor project — audiences vote for
   discrete musical "modes" instead of a continuous position. Worth a citation nod later
-  — combo isn't reusing their tech (no app, and a small number of directors rather than
-  a crowd, at least to start) but the shape (a listening entity → continuous signal →
-  live nudge) is the same lineage.
+  — combo isn't reusing their tech (§6's room-mic mechanism replaces the app entirely)
+  but the shape (a listening entity → continuous signal → live nudge) is the same
+  lineage.
 
 ## 12. Positioning against prior art — IRCAM's OMax/ImproteK/Somax2/Dicy2 family
 
@@ -274,11 +345,10 @@ which voices, if any, would actually use it — a sketching-phase question.
   just far more often and expensively. Natural fit for batch/offline mode later; a
   poor fit for live/interactive performance, which can't pause to search before
   committing to the next notes.
-- **Polyphonic/keyboard chord input** (§6).
+- **Polyphonic/keyboard chord input**, for the performer role specifically (§6) — the
+  director's use of a MIDI keyboard is a different, much simpler problem and is in
+  scope.
 - **Composed head melodies** as part of a song object (§3) — changes+form only for now.
-- **Crowd-of-listeners director UI** (Mood-Conductor-style web app) — architecture
-  should support N directors (§11), but the human-facing input starts as a small MIDI
-  control surface, not an app.
 
 ## 14. Nods owed, not yet written
 
