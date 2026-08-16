@@ -3,16 +3,23 @@
 Status: design consolidated 2026-08-06. This document is the single source of truth
 for the design; individual decisions below supersede any earlier scattered notes.
 
-**Built so far**: the gesture sub-gesture layer (§9, ported from AGRP) and the
-song/scenario data model (§3) — both with passing tests, see [README.md](README.md).
-**Designed but not yet built**: everything else below — voice/role architecture (§2),
-generation modes (§4), accompaniment-listening (§5), drums (§7), the gesture
-vocabulary-establishment mechanisms (§10) and composition layer, the musical director
-and its two channels (§11), and the unified MIDI-only human input covering performer,
-director, and audience (§6). Note that `input/midi_listener.py` currently only wires up
-a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap against §2's multi-human
-principle, not a design decision; it needs to grow into one listener/recogniser pair
-per human voice, and eventually a room-mic path for the audience case (§6).
+**Built so far**: the gesture sub-gesture layer (§9, ported from AGRP), the
+song/scenario data model (§3), and an ensemble skeleton MVP (§2/§4 — see
+[README.md](README.md)) — a thin `Voice`, a `Session` that steps a `Song` bar-by-bar
+into a symbolic `Timeline`, and machine-speed-vs-real-time pacing behind a single
+generation loop, proven end-to-end with a deliberately dumb `chord_tone_generator`
+stub. All with passing tests. **Not yet built even within §2/§4**: role assignment,
+same-instrument doubling and the register-split default, and multi-human/multi-voice
+sessions — the MVP is one song, any number of AI-sourced stub voices, no roles yet.
+**Designed but not yet built at all**: accompaniment-listening (§5), drums (§7), the
+gesture vocabulary-establishment mechanisms (§10) and composition layer, the musical
+director and its two channels (§11), and the unified MIDI-only human input covering
+performer, director, and audience (§6). Note that `input/midi_listener.py` currently
+only wires up a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap against
+§2's multi-human principle, not a design decision; it needs to grow into one
+listener/recogniser pair per human voice, and eventually a room-mic path for the
+audience case (§6). See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
+for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into
 a genuine gesture grammar rather than a hand-authored one (§10.3); can the system
 develop and recall recurring "tunes" of its own (§1, §4).

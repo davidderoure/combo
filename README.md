@@ -47,6 +47,19 @@ arrive from a live MIDI port or are generated in-process by an AI voice, so an A
 voice's own output can be fed through the same recogniser without any extra bridging
 code, just by calling those methods directly instead of going through `MidiListener`.
 
+The second piece under construction is the **ensemble skeleton** (DESIGN.md §2/§4): a
+thin `Voice` (id, instrument, register, human-or-AI source) driving a `Session` that
+steps a `Song` bar-by-bar and merges each AI-sourced voice's output into one symbolic
+`Timeline` — notes tagged by beat position, not wall-clock time. Generation mode only
+controls *pacing* of that same loop, not what gets generated: `machine_speed` runs
+unpaced (the one-shot-song-generator case, §4.1), `real_time` paces each bar to the
+song's tempo (self-play or interactive rehearsal, §4.2/§4.3 — which one depends on who's
+listening, not on this code). `ensemble/generators.py`'s `chord_tone_generator` is a
+deliberately dumb placeholder (root + fifth on beats 1 and 3) whose only job is proving
+the pipeline end-to-end; real generation (an adapted Wolfson model, DYCI2/Dicy2-python,
+or something new — DESIGN.md §12) replaces it once the rest of the skeleton
+(accompaniment-listening, the director, drums) is built and proven against it.
+
 ## Layout
 
 - `gesture/recognizer.py` — the ported sub-gesture state machine (no MIDI/IO deps)
@@ -57,13 +70,21 @@ code, just by calling those methods directly instead of going through `MidiListe
   chorus' worth of chord changes), `Section`/`Song` (form = ordered sections, each a
   number of cycles through the changes), and `chart.py`, a plain-text chart format for
   authoring songs by hand — see `songs/blues_in_f.chart` for an example.
-- `tests/test_recognizer.py`, `tests/test_song.py` — no MIDI hardware needed
+- `ensemble/` — the ensemble skeleton (DESIGN.md §2/§4): `timeline.py` (`NoteEvent`,
+  `Timeline`), `voice.py` (`Voice`), `generators.py` (the stub `chord_tone_generator`),
+  `session.py` (`Session`, generation-mode dispatch, an injectable `Clock` so real-time
+  pacing is testable without actually waiting).
+- `tests/test_recognizer.py`, `tests/test_song.py`, `tests/test_session.py` — no MIDI
+  hardware needed
 - `listen.py` — small runnable script: live MIDI in, prints detected sub-gestures
+- `ensemble/demo.py` — small runnable script: generates a chart's worth of stub sax
+  output and prints it (`python -m ensemble.demo`)
 
 ## Running
 
 ```
 pip install -r requirements.txt
-python listen.py --port 0   # list ports with --list
+python listen.py --port 0        # list ports with --list
+python -m ensemble.demo          # no MIDI needed
 pytest
 ```
