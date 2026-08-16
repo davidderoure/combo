@@ -6,8 +6,8 @@ for the design; individual decisions below supersede any earlier scattered notes
 **Built so far**: the gesture sub-gesture layer (§9, ported from AGRP), the
 song/scenario data model (§3), an ensemble skeleton MVP (§2/§4), a gesture vocabulary
 composition layer MVP (§10.1/§10.2), a rule-based drums voice (§7),
-accompaniment-listening (§5), and the musical director's dial channel (§11 — see
-[README.md](README.md)). The ensemble MVP is a thin
+accompaniment-listening (§5), the musical director's dial channel (§11), and
+performer/director MIDI input (§6 — see [README.md](README.md)). The ensemble MVP is a thin
 `Voice`, a `Session` that steps a `Song` bar-by-bar into a symbolic `Timeline`, and
 machine-speed-vs-real-time pacing behind a single generation loop — proven multi-voice,
 not just single-voice, via `ensemble/demo.py` running the `chord_tone_generator` sax
@@ -29,11 +29,17 @@ varying-density fixture since the sax stub's density never varies. The director
 `DirectorSource`); `comping_generator` shifts its thresholds with the aggregated
 intensity, and `ensemble_intensity_critic` derives that intensity by genuinely
 listening to the ensemble's own combined density — the first real "AI critic," not
-just a manually-supplied constant. All with passing tests.
+just a manually-supplied constant. MIDI input (`input/sources.py`) now dispatches by
+role from `config.MIDI_SOURCES`: performer sources each get their own
+`MidiListener`/`GestureRecognizer` pair (§2's multi-human principle — this is no
+longer just an unwired data-model gap), director sources get a `DirectorMidiListener`
+reading a live Control Change into the intensity dial. Verified with a real (if
+virtual, via macOS's IAC Driver) MIDI port end-to-end — an actual note-on produced
+`Gesture("handover")`, an actual CC message updated a live intensity value — though
+not against physical hardware, which this environment doesn't have. All with passing
+tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
-and the register-split default, *multi-human* sessions specifically (multiple
-simultaneous AI voices already work — see above — the gap is live human input, not the
-session/voice architecture), and tempo elasticity (§4.1/§4.2) within the ensemble
+and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
 skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
 — the data model can carry params, nothing populates them from raw playing yet) and
 §10.3's automatic inference of a genuinely new (non-aliased) taught meaning, within the
@@ -41,14 +47,10 @@ gesture vocabulary layer; real swing-timing (triplet-based ride) and generative/
 behaviour within drums; "mirrored" builds near arc peaks and the same-register
 role-split default applied between two accompanists, within accompaniment-listening —
 both need machinery (`ArcController`, role assignment) that doesn't exist yet; within
-the director, a consumer for the gesture channel, batch-mode scoring, and live
-human/MIDI director input (§6).
-**Designed but not yet built at all**: the unified MIDI-only human input covering
-performer, director, and audience (§6). Note that `input/midi_listener.py` currently
-only wires up a single MIDI port (`config.MIDI_INPUT_PORT`) — a concrete gap against
-§2's multi-human principle, not a design decision; it needs to grow into one
-listener/recogniser pair per human voice, and eventually a room-mic path for the
-audience case (§6). See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
+the director, a consumer for the gesture channel and batch-mode scoring; within MIDI
+input, the audience/room-mic path, and any verification against real (non-virtual)
+hardware.
+See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into
 a genuine gesture grammar rather than a hand-authored one (§10.3); can the system
@@ -229,7 +231,24 @@ keyboard/controller), never a bespoke control panel or app.
   already built for a single performer (§9), treated as one aggregate voice feeding the
   director's aggregation stage (§11). Reuses the existing architecture entirely; the
   audience isn't a new subsystem, just another source for machinery that already
-  exists.
+  exists. Still not built — see status below.
+
+- **Status**: performer and director roles are both built (`input/sources.py`) — one
+  `MidiListener`/`GestureRecognizer` pair per performer source, one
+  `DirectorMidiListener` (reads a Control Change into a live intensity value, `§11`'s
+  dial) per director source, dispatched by role from `config.MIDI_SOURCES`. Verified
+  further than "logic only, no hardware" originally allowed for: this machine has
+  virtual MIDI ports (macOS's IAC Driver), so a real message was actually sent through
+  a real (if virtual) MIDI port and received — a genuine note-on produced
+  `Gesture("handover")` end-to-end, and a genuine CC message updated a
+  `DirectorMidiListener`'s live intensity correctly. Not verified: an actual physical
+  tracker (Sonuus or otherwise) or MIDI controller, which this environment doesn't
+  have. The automated test suite (`tests/test_midi_sources.py`) stays hardware-
+  independent regardless, since the IAC-based check depends on macOS-specific virtual
+  MIDI infrastructure not guaranteed present elsewhere (e.g. in CI).
+  The **audience** (room-mic) path is not built — same shape as the performer path in
+  principle, but nothing wires a room microphone's pitch-tracked output into a
+  `MidiSourceConfig`-style source yet.
 
 ## 7. Drums
 

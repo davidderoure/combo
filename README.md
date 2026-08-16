@@ -12,7 +12,7 @@ recurring "tunes" of its own.
 
 ## Current status
 
-Early build-out, five pieces in so far. First: a **gesture recognition** layer for
+Early build-out, six pieces in so far. First: a **gesture recognition** layer for
 monophonic note streams (bass, sax, or any instrument via a pitch-to-MIDI tracker, e.g.
 a Sonuus i2M — but equally an AI voice's own generated output), so any performer, human
 or AI, can cue the ensemble — handovers, dialogue — using a small vocabulary of
@@ -114,8 +114,25 @@ demo. The gesture channel's data model and aggregation are built (`DirectorSigna
 carry a `Gesture`) but have no consumer yet — a director-emitted `reset_tempo()` has
 nowhere to act until §4.1's runtime tempo and §8's handover triggers exist as code, said
 plainly in the module docstring and in the demo's own output rather than left implicit.
-Also unbuilt: batch-mode scoring and live human/MIDI director input (needs §6 first) —
-the same gap human `Voice`s already have relative to live MIDI, not a new one.
+Also unbuilt: batch-mode scoring.
+
+The sixth piece is **multi-role MIDI input** (DESIGN.md §6, `input/sources.py`) —
+the live-human-input gap the director and voices both had is now closed for the
+performer and director roles. `config.MIDI_SOURCES` lists role-tagged sources;
+`start_midi_sources` dispatches each to a `MidiListener`/`GestureRecognizer` pair
+(performer) or a new `DirectorMidiListener` (director — reads one MIDI Control
+Change into a live intensity value, `as_source()` returning a `DirectorSource` that
+always reflects the *current* value, not a frozen snapshot, so a real fader genuinely
+drives `Session.generate`'s per-bar aggregation as it moves). This environment has no
+physical MIDI hardware, but does have macOS's virtual IAC Driver ports — used to
+verify the whole pipeline for real rather than only in the abstract: an actual note-on
+sent through a real (if virtual) port produced `Gesture("handover")` end-to-end, and
+an actual CC message updated a live intensity value correctly. The automated test
+suite stays hardware-independent regardless (`tests/test_midi_sources.py`, feeding
+synthetic MIDI byte tuples directly, the same technique `gesture/recognizer.py`'s own
+tests use), since the IAC-based check depends on macOS-specific infrastructure not
+guaranteed present elsewhere. Not built: the audience/room-mic path, and anything
+verified against real physical hardware.
 
 ## Layout
 
@@ -124,8 +141,10 @@ the same gap human `Voice`s already have relative to live MIDI, not a new one.
   §10.1/§10.2): `Gesture`, `GestureRule`, `GestureRecognizer` (wraps a
   `SubGestureRecognizer`, drop-in compatible with anywhere it's used today)
 - `input/midi_listener.py` — `python-rtmidi`-based MIDI input, converts note/pitch-bend
-  events into calls on a `SubGestureRecognizer` (style follows wolfson's
-  `input/midi_listener.py`)
+  events into calls on a `SubGestureRecognizer`/`GestureRecognizer` (style follows
+  wolfson's `input/midi_listener.py`)
+- `input/sources.py` — role-based MIDI dispatch (DESIGN.md §6): `MidiSourceConfig`,
+  `DirectorMidiListener` (CC -> live intensity), `MidiSources`, `start_midi_sources`
 - `song/` — the song/scenario data model (DESIGN.md §3): `Chord`, `Changes` (one
   chorus' worth of chord changes), `Section`/`Song` (form = ordered sections, each a
   number of cycles through the changes), and `chart.py`, a plain-text chart format for
@@ -143,8 +162,10 @@ the same gap human `Voice`s already have relative to live MIDI, not a new one.
   `constant_director_source`, `ensemble_intensity_critic`).
 - `tests/test_recognizer.py`, `tests/test_gesture_vocabulary.py`, `tests/test_song.py`,
   `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
-  `tests/test_comping.py`, `tests/test_director.py` — no MIDI hardware needed
-- `listen.py` — small runnable script: live MIDI in, prints detected sub-gestures
+  `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py` —
+  no MIDI hardware needed
+- `listen.py` — small runnable script: starts every source in `config.MIDI_SOURCES`,
+  prints recognised gestures (performers) and live intensity (directors)
 - `gesture/demo.py` — small runnable script: replays synthetic gesture sequences
   (seed gestures, record + alias teaching) and prints what's recognised
   (`python -m gesture.demo`)
@@ -157,7 +178,8 @@ the same gap human `Voice`s already have relative to live MIDI, not a new one.
 
 ```
 pip install -r requirements.txt
-python listen.py --port 0        # list ports with --list
+python listen.py --list          # show available MIDI ports
+python listen.py                 # start every source in config.MIDI_SOURCES
 python -m gesture.demo           # no MIDI needed
 python -m ensemble.demo          # no MIDI needed
 pytest

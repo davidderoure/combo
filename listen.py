@@ -1,25 +1,30 @@
-"""Live MIDI in, prints detected sub-gestures as they arrive.
+"""Live MIDI in from every role-tagged source in config.MIDI_SOURCES: recognised
+gestures from performers, live intensity from directors — DESIGN.md §6.
 
     python listen.py --list        # show available MIDI input ports
-    python listen.py --port 0      # listen on port 0 (Ctrl-C to stop)
+    python listen.py               # start every source in config.MIDI_SOURCES
+
+No MIDI hardware was available to verify this end-to-end while building it — the
+config/dispatch logic is unit tested (tests/test_midi_sources.py), but actually
+running this script against real devices hasn't been.
 """
 
 import argparse
 import threading
 import time
 
-from config import MIDI_INPUT_PORT, PITCH_BEND_RANGE
-from gesture.recognizer import SubGesture, SubGestureRecognizer
+from config import MIDI_SOURCES, PITCH_BEND_RANGE
+from gesture.vocabulary import Gesture
 from input.midi_listener import MidiListener
+from input.sources import start_midi_sources
 
 
-def on_subgesture(sg: SubGesture) -> None:
-    print(f"{sg.label:>2}  start={sg.start_time:8.2f}  dur={sg.duration:5.2f}  n={sg.n}")
+def on_gesture(source_id: str, gesture: Gesture) -> None:
+    print(f"[{source_id}] gesture: {gesture}")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=MIDI_INPUT_PORT)
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args()
 
@@ -28,20 +33,28 @@ def main() -> None:
             print(f"{i}: {name}")
         return
 
-    recognizer = SubGestureRecognizer(on_subgesture=on_subgesture, pitch_bend_range=PITCH_BEND_RANGE)
-    listener = MidiListener(recognizer)
-    listener.start(args.port)
+    sources = start_midi_sources(MIDI_SOURCES, on_gesture=on_gesture, pitch_bend_range=PITCH_BEND_RANGE)
 
     stop = threading.Event()
 
     def tick_loop() -> None:
         while not stop.is_set():
-            recognizer.tick(time.time())
+            now = time.time()
+            for listener in sources.performers.values():
+                listener.recognizer.tick(now)
             time.sleep(0.02)
 
-    threading.Thread(target=tick_loop, daemon=True).start()
+    def status_loop() -> None:
+        while not stop.is_set():
+            for source_id, listener in sources.directors.items():
+                print(f"[{source_id}] intensity: {listener.intensity:.2f}")
+            time.sleep(1.0)
 
-    print("Listening for sub-gestures... (Ctrl-C to stop)")
+    threading.Thread(target=tick_loop, daemon=True).start()
+    if sources.directors:
+        threading.Thread(target=status_loop, daemon=True).start()
+
+    print("Listening... (Ctrl-C to stop)")
     try:
         while True:
             time.sleep(0.1)
@@ -49,7 +62,7 @@ def main() -> None:
         pass
     finally:
         stop.set()
-        listener.stop()
+        sources.stop_all()
 
 
 if __name__ == "__main__":
