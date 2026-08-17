@@ -12,7 +12,7 @@ recurring "tunes" of its own.
 
 ## Current status
 
-Early build-out, six pieces in so far. First: a **gesture recognition** layer for
+Early build-out, seven pieces in so far. First: a **gesture recognition** layer for
 monophonic note streams (bass, sax, or any instrument via a pitch-to-MIDI tracker, e.g.
 a Sonuus i2M — but equally an AI voice's own generated output), so any performer, human
 or AI, can cue the ensemble — handovers, dialogue — using a small vocabulary of
@@ -111,10 +111,11 @@ simple, "AI critic" (DESIGN.md §11's own phrase): it derives intensity by liste
 the ensemble's own combined density, not just accepting a manually-supplied constant —
 demonstrated in `ensemble/demo.py` reading back the sax+drums session from the first
 demo. The gesture channel's data model and aggregation are built (`DirectorSignal` can
-carry a `Gesture`) but have no consumer yet — a director-emitted `reset_tempo()` has
-nowhere to act until §4.1's runtime tempo and §8's handover triggers exist as code, said
-plainly in the module docstring and in the demo's own output rather than left implicit.
-Also unbuilt: batch-mode scoring.
+carry a `Gesture`) but isn't wired to anything that acts on it — §8's handover
+triggers now exist as code (below), but they consume gestures from a `Session`'s
+`gesture_source`, not from `DirectorSignal.gesture`, so a director-emitted `handover()`
+still has nowhere to act, said plainly in the module docstring and in the demo's own
+output rather than left implicit. Also unbuilt: batch-mode scoring.
 
 The sixth piece is **multi-role MIDI input** (DESIGN.md §6, `input/sources.py`) —
 the live-human-input gap the director and voices both had is now closed for the
@@ -133,6 +134,27 @@ synthetic MIDI byte tuples directly, the same technique `gesture/recognizer.py`'
 tests use), since the IAC-based check depends on macOS-specific infrastructure not
 guaranteed present elsewhere. Not built: the audience/room-mic path, and anything
 verified against real physical hardware.
+
+The seventh piece is **handover/transition triggers** (DESIGN.md §8,
+`ensemble/transitions.py`) — the first real slice of the long-referenced
+`ArcController` (still missing everywhere else it's cited: §5, §7, §11), specifically
+the transition-timing piece. A recognised `handover()` (the only seeded gesture whose
+meaning maps onto a transition — `reset_tempo()` is untouched, that's §4.1's still-
+unbuilt tempo dial) shortens the current section to end after its current chorus.
+`TransitionController.effective_song()` returns a form-truncated `Song`, and
+`Session` now passes that *effective* song through the exact same parameter slot
+every generator already reads `section_at`/`chord_at` from — `chord_tone_generator`,
+`drum_generator`, and `comping_generator` all pick this up with **zero code
+changes**, confirmed by this phase touching none of those three files. Proven against
+a real consumer, not just checked in isolation: `ensemble/demo.py` shows
+`drum_generator`'s section-aware density shifting 12 bars early after a scripted
+handover. `LiveGestureQueue` is the **first thread-safety primitive in this
+codebase** — genuinely needed now that a live MIDI callback thread (§6) and
+`Session.generate`'s real-time loop run concurrently, not a precaution added out of
+habit. Not built: "pulling late" (no gesture exists for it), genuine shortening of
+the *total* performance length (a handover reallocates which section plays when,
+within the same nominal duration), and wiring the director's gesture channel to this
+mechanism.
 
 ## Layout
 
@@ -159,11 +181,13 @@ verified against real physical hardware.
   `synthetic_varying_density_generator` test/demo fixture), `comping.py` (DESIGN.md
   §5 — the concrete accompanist, `comping_generator`), `director.py` (DESIGN.md §11
   — `DirectorSignal`, `Director`, `aggregate_director_signals`,
-  `constant_director_source`, `ensemble_intensity_critic`).
+  `constant_director_source`, `ensemble_intensity_critic`), `transitions.py`
+  (DESIGN.md §8 — `TransitionController`, `GestureSource`, `scripted_gesture_source`,
+  `LiveGestureQueue`).
 - `tests/test_recognizer.py`, `tests/test_gesture_vocabulary.py`, `tests/test_song.py`,
   `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
-  `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py` —
-  no MIDI hardware needed
+  `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py`,
+  `tests/test_transitions.py` — no MIDI hardware needed
 - `listen.py` — small runnable script: starts every source in `config.MIDI_SOURCES`,
   prints recognised gestures (performers) and live intensity (directors)
 - `gesture/demo.py` — small runnable script: replays synthetic gesture sequences
@@ -171,8 +195,9 @@ verified against real physical hardware.
   (`python -m gesture.demo`)
 - `ensemble/demo.py` — small runnable script: generates a chart's worth of stub sax +
   drums output and prints it, then separate demonstrations of comping's duck/fill
-  behaviour and the director's intensity dial (low vs. high, plus the AI critic
-  reading the sax+drums session) (`python -m ensemble.demo`)
+  behaviour, the director's intensity dial (low vs. high, plus the AI critic reading
+  the sax+drums session), and a scripted handover shifting section boundaries
+  (`python -m ensemble.demo`)
 
 ## Running
 

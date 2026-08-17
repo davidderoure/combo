@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, List, Optional, Protocol
 
 from .director import Director, aggregate_director_signals
 from .timeline import BEATS_PER_BAR, Timeline
+from .transitions import GestureSource, TransitionController
 from .voice import Voice
 
 if TYPE_CHECKING:
@@ -59,6 +60,7 @@ class Session:
     song: "Song"
     voices: List[Voice] = field(default_factory=list)
     directors: List[Director] = field(default_factory=list)
+    gesture_source: Optional[GestureSource] = None
 
     def generate(self, mode: str = MACHINE_SPEED, clock: Optional[Clock] = None) -> Timeline:
         if mode not in (MACHINE_SPEED, REAL_TIME):
@@ -81,6 +83,9 @@ class Session:
         seconds_per_beat = 60.0 / self.song.tempo_bpm
 
         timeline = Timeline()
+        # Fresh per generate() call, same lifetime as `timeline` — each call is a
+        # fresh performance, so fresh transition state (DESIGN.md §8).
+        transitions = TransitionController()
         bar_index = 0
         while bar_index * BEATS_PER_BAR < total_beats:
             # Every voice generating for this bar sees the same snapshot of prior
@@ -89,11 +94,18 @@ class Session:
             # corrupt the loop by calling .add() on what it's handed (DESIGN.md §5).
             prior_bars = Timeline(list(timeline.events))
 
+            # No gesture_source configured -> never polled -> effective_song always
+            # equals self.song -> existing behaviour is unaffected (DESIGN.md §8).
+            if self.gesture_source is not None:
+                for gesture in self.gesture_source(bar_index):
+                    transitions.on_gesture(gesture, self.song, bar_index * BEATS_PER_BAR)
+            effective_song = transitions.effective_song(self.song)
+
             # One aggregated signal per bar, shared by every voice generating that
             # bar (DESIGN.md §11). No directors configured -> aggregating [] ->
             # the neutral default -> existing generators are unaffected.
             signals = [
-                director.signal_source(self.song, bar_index, prior_bars)
+                director.signal_source(effective_song, bar_index, prior_bars)
                 for director in self.directors
                 if director.source == "ai"
             ]
@@ -103,7 +115,7 @@ class Session:
             for voice in self.voices:
                 if voice.source != "ai":
                     continue
-                for event in voice.generator(self.song, bar_index, prior_bars, director_signal):
+                for event in voice.generator(effective_song, bar_index, prior_bars, director_signal):
                     bar_events.append(replace(event, voice_id=voice.id))
             for event in bar_events:
                 timeline.add(event)

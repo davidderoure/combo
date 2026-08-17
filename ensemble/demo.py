@@ -16,6 +16,8 @@ from ensemble.drums import ACOUSTIC_SNARE, CLOSED_HI_HAT, RIDE_CYMBAL_1
 from ensemble.listening import density as listening_density
 from ensemble.listening import synthetic_varying_density_generator
 from ensemble.timeline import BEATS_PER_BAR, Timeline
+from ensemble.transitions import TransitionController, scripted_gesture_source
+from gesture.vocabulary import Gesture
 from song import parse_chart
 
 DEFAULT_CHART = Path(__file__).resolve().parent.parent / "songs" / "blues_in_f.chart"
@@ -137,10 +139,11 @@ def _comping_response(target_density: float, intensity: float) -> str:
 def demo_director(chart_path: Path) -> None:
     print("\n--- Musical director demo (DESIGN.md §11) ---")
     print("Dial channel only: the gesture channel (DirectorSignal.gesture,")
-    print("aggregate_director_signals) has a tested data model but no consumer yet —")
-    print("a director-emitted reset_tempo()/handover() has nowhere to act until")
-    print("§4.1's runtime tempo and §8's handover triggers exist as code, not just")
-    print("design (see ensemble/director.py's module docstring).\n")
+    print("aggregate_director_signals) has a tested data model but isn't wired to")
+    print("anything that acts on it -- §8's handover triggers now exist as code (see")
+    print("the transitions demo below), but they consume gestures from a Session's")
+    print("gesture_source, not from DirectorSignal.gesture, so a director-emitted")
+    print("handover() still has nowhere to act (see ensemble/director.py's docstring).\n")
 
     song = parse_chart(chart_path.read_text())
 
@@ -191,6 +194,40 @@ def demo_director(chart_path: Path) -> None:
         print(f"    bar {bar_index:2d}: critic-derived intensity = {signal.intensity:.2f}")
 
 
+def demo_transitions(chart_path: Path) -> None:
+    print("\n--- Handover/transition triggers demo (DESIGN.md §8) ---")
+    print("A scripted handover() at bar 24 (partway through blues_in_f.chart's Solos")
+    print("x3) should shorten Solos to end after its current chorus -- moving later")
+    print("section boundaries 12 bars earlier than the nominal bar-count scaffold.\n")
+
+    song = parse_chart(chart_path.read_text())
+    transitions = TransitionController()
+    transitions.on_gesture(Gesture("handover"), song, 24 * BEATS_PER_BAR)
+    effective = transitions.effective_song(song)
+
+    print("  bar  nominal section          effective section (after handover)")
+    for bar_index in (0, 11, 12, 23, 24, 35, 36, 47, 48, 59):
+        beat = bar_index * BEATS_PER_BAR
+        nominal_section, nominal_chorus = song.section_at(beat)
+        effective_section, effective_chorus = effective.section_at(beat)
+        print(
+            f"  {bar_index:3d}  {nominal_section.name} (chorus {nominal_chorus})".ljust(35)
+            + f"{effective_section.name} (chorus {effective_chorus})"
+        )
+
+    print("\n  Same shift reaching a real consumer -- drums' section-aware density")
+    print("  (§7) at bar 36, with vs. without the scripted handover:")
+    drums_voice = Voice(id="drums", instrument="drums", register=DRUM_REGISTER, source="ai", generator=drum_generator(seed=1))
+    without = Session(song=song, voices=[drums_voice]).generate(mode=MACHINE_SPEED)
+    with_handover = Session(
+        song=song, voices=[drums_voice], gesture_source=scripted_gesture_source({24: [Gesture("handover")]})
+    ).generate(mode=MACHINE_SPEED)
+    for label, timeline in (("without handover", without), ("with handover", with_handover)):
+        pitches = sorted({e.pitch for e in timeline if 36 * BEATS_PER_BAR <= e.start_beat < 37 * BEATS_PER_BAR})
+        names = [GM_PERCUSSION_NAMES.get(p, str(p)) for p in pitches]
+        print(f"    bar 36, {label}: {names}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--chart", type=Path, default=DEFAULT_CHART)
@@ -200,6 +237,7 @@ def main() -> None:
     demo_sax_and_drums(args.chart, args.mode)
     demo_comping(args.chart)
     demo_director(args.chart)
+    demo_transitions(args.chart)
 
 
 if __name__ == "__main__":

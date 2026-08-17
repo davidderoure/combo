@@ -6,8 +6,9 @@ for the design; individual decisions below supersede any earlier scattered notes
 **Built so far**: the gesture sub-gesture layer (§9, ported from AGRP), the
 song/scenario data model (§3), an ensemble skeleton MVP (§2/§4), a gesture vocabulary
 composition layer MVP (§10.1/§10.2), a rule-based drums voice (§7),
-accompaniment-listening (§5), the musical director's dial channel (§11), and
-performer/director MIDI input (§6 — see [README.md](README.md)). The ensemble MVP is a thin
+accompaniment-listening (§5), the musical director's dial channel (§11),
+performer/director MIDI input (§6), and the handover half of transition triggers
+(§8 — see [README.md](README.md)). The ensemble MVP is a thin
 `Voice`, a `Session` that steps a `Song` bar-by-bar into a symbolic `Timeline`, and
 machine-speed-vs-real-time pacing behind a single generation loop — proven multi-voice,
 not just single-voice, via `ensemble/demo.py` running the `chord_tone_generator` sax
@@ -36,8 +37,14 @@ longer just an unwired data-model gap), director sources get a `DirectorMidiList
 reading a live Control Change into the intensity dial. Verified with a real (if
 virtual, via macOS's IAC Driver) MIDI port end-to-end — an actual note-on produced
 `Gesture("handover")`, an actual CC message updated a live intensity value — though
-not against physical hardware, which this environment doesn't have. All with passing
-tests.
+not against physical hardware, which this environment doesn't have. Handover
+transitions (`ensemble/transitions.py`, `TransitionController`) let a recognised
+`handover()` shorten the current section to end after its current chorus — every
+existing generator picks this up with zero code changes, since `Session` now passes
+an *effective* (possibly form-truncated) `Song` through the same parameter slot they
+already read from; proven against a real consumer (`drum_generator`'s density shifts
+sections early), not just checked in isolation. This is the first real slice of the
+long-referenced `ArcController`. All with passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
 skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
@@ -46,10 +53,12 @@ skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(u
 gesture vocabulary layer; real swing-timing (triplet-based ride) and generative/soloing
 behaviour within drums; "mirrored" builds near arc peaks and the same-register
 role-split default applied between two accompanists, within accompaniment-listening —
-both need machinery (`ArcController`, role assignment) that doesn't exist yet; within
-the director, a consumer for the gesture channel and batch-mode scoring; within MIDI
-input, the audience/room-mic path, and any verification against real (non-virtual)
-hardware.
+both need machinery (the *rest* of `ArcController`, role assignment) that doesn't
+exist yet; within the director, a consumer for the gesture channel and batch-mode
+scoring; within MIDI input, the audience/room-mic path, and any verification against
+real (non-virtual) hardware; within transitions, "pulling late" (no gesture for it
+yet), genuine total-length shortening, and wiring the director's gesture channel to
+`TransitionController`.
 See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into
@@ -287,6 +296,28 @@ resolution: bar counts are a **nominal scaffold** (a target section length), and
 **trained gesture vocabulary** is the concrete, learnable trigger that can pull a
 transition early or late — closer to how a real band uses a nominal form as a shared
 map while letting a cue move the actual boundary.
+
+- **Status**: the "pull early" half is built (`ensemble/transitions.py`,
+  `TransitionController`), tests passing — the first real slice of the
+  long-referenced `ArcController` (still missing everywhere else it's cited: §5, §7,
+  §11), specifically the transition-timing piece, not the full tension/peak-modelling
+  concept. Only `handover()` triggers anything — it's the sole seeded gesture whose
+  meaning maps onto a transition; `reset_tempo()` is §4.1's tempo dial, untouched
+  here. A recognised handover shortens the current section to end after its current
+  chorus. Every existing generator (`chord_tone_generator`, `drum_generator`,
+  `comping_generator`) picks this up with **zero code changes** — `Session` now
+  passes an *effective* (possibly form-truncated) `Song` through the same parameter
+  slot they already read `section_at`/`chord_at` from.
+- **Not built**: "pulling late" (extending a section) — no seeded gesture means what
+  it yet; genuine shortening of the *total* performance length — a handover
+  reallocates which section plays when within the same nominal total duration, it
+  doesn't end the performance early (the bars a truncated section gives up are
+  absorbed into whichever section governs later bars); and the director's gesture
+  channel isn't wired to this — `TransitionController` consumes gestures from a
+  `Session.gesture_source`, not from `DirectorSignal.gesture` (§11).
+- **First thread-safety primitive in the codebase**: `LiveGestureQueue`, needed now
+  that a live MIDI callback thread (§6) and `Session.generate`'s loop (real-time
+  mode) genuinely run concurrently — a new category of concern, not glossed over.
 
 ## 9. Gesture recognition and vocabulary
 
