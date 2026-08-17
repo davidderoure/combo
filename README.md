@@ -201,6 +201,30 @@ one bias parameter the model itself already frames as a general busyness dial
 grounded in a real probe (0.723 vs. 0.419 beats average note duration at
 `rhythmic_density` 0.0 vs. 1.0) before the test threshold was picked.
 
+The ninth piece is **MIDI output** (DESIGN.md §4, `output/midi_output.py`) — the
+"playback/scheduling as a separate stage" §4 already named as designed-but-not-built.
+Until now every generator's output only ever got printed as text; nothing in combo
+could actually be heard. `build_schedule` (pure — Timeline + tempo + a
+voice_id-to-channel map -> a time-sorted list of MIDI note-on/note-off messages) and
+`play_timeline` (a single loop that sleeps until each scheduled message's time and
+sends it, all-notes-off in a `finally` block regardless of how playback ends) are
+deliberately much simpler than wolfson's own `output/midi_output.py`: wolfson
+continuously interleaves generation and playback one phrase at a time, needing a
+dedicated output thread and a "latest wins" pending-queue; combo's `Session` already
+generates a whole multi-voice `Timeline` up front (`machine_speed` mode), so the
+entire schedule is known before playback starts and no thread coordination is needed.
+`play_timeline` reuses `ensemble/session.py`'s `Clock`/`FakeClock` directly rather
+than inventing a second pacing abstraction — the same mechanism `test_session.py`
+already uses to verify real-time pacing without actually waiting, applied here to
+verify playback scheduling the same way. `self_test.py` (new, top-level, sibling to
+`listen.py`) is the first thing that generalises Wolfson's AI-vs-AI self-play to
+combo's whole ensemble: bass (`chord_tone_generator`, honestly labelled as a stand-in
+— real bass generation isn't built), sax (real generation, skipped with a clear
+message if `sax_best.pt` isn't present), two role-split comping voices (Phase 15,
+now audible rather than only measured), and drums — generated once, then played
+through a real MIDI output port. `--loop N` plays the chart N times sharing one
+`RehearsalMemory`, making Phase 11's rehearsal idea audible rather than only tested.
+
 Sax also plans several bars ahead now (Phase 10), prompted by David asking directly
 whether bar-by-bar generation loses a soloist's "conscious planning." What planning
 means mechanically here: `sax_generator` generates a chord-consistent multi-bar span
@@ -374,6 +398,11 @@ suite is no longer sub-second once torch is imported.
   same-instrument-doubling slice of role assignment: `default_accompanist_roles`,
   a greedy register-overlap rule; consumed by `comping_generator`'s `lay_out`
   parameter).
+- `output/midi_output.py` — the playback stage (DESIGN.md §4): `list_output_ports`,
+  `build_schedule` (pure: `Timeline` + tempo + channel map -> a time-sorted MIDI
+  schedule), `play_timeline` (real-time playback, reusing `ensemble.session`'s
+  `Clock`/`FakeClock`, all-notes-off in a `finally` block regardless of how
+  playback ends)
 - `ensemble/wolfson/` — ported generative core from wolfson (DESIGN.md §12):
   `lstm_model.py` (`PhraseModel`), `phrase_generator.py` (`PhraseGenerator`),
   `encoding.py`, `chords.py`, `scales.py`, `motifs.py` (`extract_interval_motifs`,
@@ -384,7 +413,8 @@ suite is no longer sub-second once torch is imported.
   `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
   `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py`,
   `tests/test_transitions.py`, `tests/test_sax.py`, `tests/test_memory.py`,
-  `tests/test_critic.py`, `tests/test_roles.py` — no MIDI hardware needed
+  `tests/test_critic.py`, `tests/test_roles.py`, `tests/test_midi_output.py` — no
+  MIDI hardware needed
 - `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
   skips cleanly if they're not present (see Running, below)
 - `listen.py` — small runnable script: starts every source in `config.MIDI_SOURCES`,
@@ -394,10 +424,13 @@ suite is no longer sub-second once torch is imported.
   (`python -m gesture.demo`)
 - `ensemble/demo.py` — small runnable script: generates a chart's worth of stub sax +
   drums output and prints it, then separate demonstrations of comping's duck/fill
-  behaviour, the director's intensity dial (low vs. high, plus the AI critic reading
-  the sax+drums session), a scripted handover shifting section boundaries, and (if
-  `sax_best.pt` is present) real generation for the sax voice
-  (`python -m ensemble.demo`)
+  behaviour, the role-split between two comping voices, the director's intensity dial
+  (low vs. high, plus the AI critic reading the sax+drums session), a scripted
+  handover shifting section boundaries, and (if `sax_best.pt` is present) real
+  generation for the sax voice (`python -m ensemble.demo`)
+- `self_test.py` — small runnable script: builds the full AI-only ensemble over a
+  chart and plays it through a real MIDI output port — see the three-step testing
+  plan below (`python self_test.py`)
 
 ## Running
 
@@ -407,8 +440,34 @@ python listen.py --list          # show available MIDI ports
 python listen.py                 # start every source in config.MIDI_SOURCES
 python -m gesture.demo           # no MIDI needed
 python -m ensemble.demo          # no MIDI needed; sax section needs sax_best.pt (below)
+python self_test.py --list-out   # show available MIDI output ports
+python self_test.py              # play blues_in_f.chart once, no MIDI input needed
 pytest
 ```
+
+### Trying it out: a three-step testing plan
+
+**1. Today, no MIDI input needed** — `python self_test.py` builds a full AI-only
+ensemble (bass stand-in, sax, two role-split comping voices, drums), generates it
+once, and plays it through a real MIDI output port to a synth (e.g. macOS's IAC
+Driver into GarageBand or a simple synth — `python self_test.py --list-out` to find
+the right port index, `--out N` to select it). This is combo's own version of
+wolfson's AI-vs-AI self-play, generalised from one bass+sax pair to the whole
+ensemble. `--loop 3` plays the chart three times, sharing one `RehearsalMemory`
+across the loop — David's rehearsal idea (DESIGN.md, Phase 11), now something to
+actually listen for rather than only a test assertion.
+
+**2. Tomorrow, MIDI input hardware, recognition only** — `python listen.py` (already
+built, no new code) prints recognised gestures and live intensity as you play, a
+real sanity check that the device/gesture recognition pipeline works. It doesn't yet
+feed anything into a running ensemble — that's step 3.
+
+**3. Not yet built, named honestly rather than glossed over** — true live rehearsal
+(your live playing actually driving the ensemble's real-time response, the way
+wolfson's live bass+AI-sax mode worked) needs a "live performance driver" connecting
+`input/sources.py`'s live streams into a running `Session.generate(mode=REAL_TIME)`.
+Nothing in this codebase does that yet — `listen.py` only prints what it recognises.
+A separate phase, to be scoped once steps 1–2 are proven.
 
 Real generation for the sax voice (DESIGN.md §12) needs the trained model weights,
 which aren't committed to this repo (gitignored — see `.gitignore`). Copy them in

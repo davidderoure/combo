@@ -8,8 +8,9 @@ song/scenario data model (§3), an ensemble skeleton MVP (§2/§4), a gesture vo
 composition layer MVP (§10.1/§10.2), a rule-based drums voice (§7),
 accompaniment-listening (§5), the musical director's dial channel (§11),
 performer/director MIDI input (§6), the handover half of transition triggers
-(§8), and the same-instrument-doubling slice of role assignment (§2 — see
-[README.md](README.md)). The ensemble MVP is a thin
+(§8), the same-instrument-doubling slice of role assignment (§2), and the
+MIDI playback stage §4 named as designed-but-not-built (`output/midi_output.py`,
+`self_test.py` — see [README.md](README.md)). The ensemble MVP is a thin
 `Voice`, a `Session` that steps a `Song` bar-by-bar into a symbolic `Timeline`, and
 machine-speed-vs-real-time pacing behind a single generation loop — proven multi-voice,
 not just single-voice, via `ensemble/demo.py` running the `chord_tone_generator` sax
@@ -133,8 +134,33 @@ voice-order-independence guarantee); `comping_generator` gained a `lay_out`
 parameter that replaces its usual duck/fill/moderate response with a rare,
 low-probability accent. The full tune-level solo/accompany/lay-out/trade
 assignment (needing the rest of `ArcController`) is not attempted — this is only
-the same-instrument-doubling piece §2 names as a separate, smaller thing. All
-with passing tests.
+the same-instrument-doubling piece §2 names as a separate, smaller thing.
+Phase 16 closes a real gap that had been true since Phase 1: nothing in combo
+could actually be heard, only printed as text. §4 already named the fix as
+designed-but-not-built ("generation should produce a symbolic timeline...
+with playback/scheduling as a separate stage") — `output/midi_output.py`'s
+`build_schedule` (pure: `Timeline` + tempo + a voice_id-to-channel map -> a
+time-sorted MIDI schedule) and `play_timeline` (real-time playback, reusing
+`ensemble/session.py`'s `Clock`/`FakeClock` rather than a new pacing
+abstraction) are it. Deliberately much simpler than wolfson's own
+`output/midi_output.py`: wolfson continuously interleaves generation and
+playback one phrase at a time (needing a dedicated output thread and a
+"latest wins" pending-queue); combo's `Session` already generates a whole
+multi-voice `Timeline` up front, so the entire schedule is known before
+playback starts and no thread coordination is needed — `KeyboardInterrupt`
+during `time.sleep()` fires immediately, so a `try/finally` is enough for
+all-notes-off cleanup too. `self_test.py` (new, top-level) generalises
+wolfson's AI-vs-AI self-play to combo's whole ensemble — bass stand-in, sax,
+two role-split comping voices, drums — generated once and played through a
+real MIDI output port; `--loop N` shares one `RehearsalMemory` across N
+playthroughs, making Phase 11's rehearsal idea audible, not just tested. This
+is the first of a three-step testing plan (see README): self-test today (no
+MIDI input needed), `listen.py` tomorrow (MIDI input device sanity-check,
+already built, no new code), and — named honestly as still missing, not
+glossed over — true live rehearsal (a human's live input actually driving the
+ensemble's real-time response) needs a "live performance driver" wiring
+`input/sources.py` into a running `Session.generate(mode=REAL_TIME)`, which
+doesn't exist yet. All with passing tests.
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a
@@ -168,7 +194,12 @@ of every weight/threshold it uses (`DEFAULT_WEIGHTS`, the contour-smoothness and
 near-repeat placeholders — all explicitly unvalidated, same status as every other
 hand-picked constant in this codebase); within search-and-evaluate (§13, Phase
 14), varying anything besides the random draw across candidates, revision after
-committing, and a director-gesture-driven `n_candidates` toggle.
+committing, and a director-gesture-driven `n_candidates` toggle; within MIDI
+playback (Phase 16), any audience/musician display (the terminal dashboard and
+web display wolfson had — explicitly deferred, not forgotten), and — the
+biggest remaining gap — a live performance driver connecting a human's live
+MIDI input to a running, responding `Session`; `self_test.py` only ever plays
+back a `Timeline` generated with no human in any role.
 See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into
@@ -253,6 +284,16 @@ Architecturally this means generation should produce a symbolic timeline (notes 
 with beat position/duration, not wall-clock time), with playback/scheduling as a
 separate stage — only that later stage needs to know whether a human occupies any role
 right now (return the result immediately, or pace to real time).
+
+**The playback stage is built** (Phase 16): `output/midi_output.py`'s `play_timeline`
+takes a symbolic `Timeline` and a tempo and paces real MIDI output to real time —
+exactly the "separate stage" described above, currently used only for case 1 (machine
+speed) via `self_test.py`: generate with no pacing, then play back the whole result
+in real time to a synth. Cases 2 and 3 (a human occupying the director or performer
+role while the ensemble is live) still need the not-yet-built "live performance
+driver" that interleaves this playback stage with concurrent generation and live
+input — see the status blurb at the top of this document and README's three-step
+testing plan.
 
 ### 4.1 Tempo is a runtime value, not a fixed constant
 

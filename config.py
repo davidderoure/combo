@@ -21,3 +21,8 @@ MIDI_SOURCES = [
 # Sonuus i2M / similar pitch-to-MIDI trackers: pitchbend range in cents.
 # 400 = +-200 cents (a whole tone each way), matching AGRP's default.
 PITCH_BEND_RANGE = 400
+
+# MIDI output port for self_test.py's playback (DESIGN.md §4's playback stage,
+# output/midi_output.py). Run `python self_test.py --list-out` to find the real
+# index for your synth/DAW (e.g. macOS's IAC Driver into GarageBand).
+MIDI_OUTPUT_PORT = 0
