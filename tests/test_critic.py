@@ -9,6 +9,7 @@ import pytest
 from ensemble.critic import (
     DEFAULT_WEIGHTS,
     _contour_string,
+    _dissonance_scale,
     _is_passing_tone,
     _levenshtein,
     _semitones_to_scale,
@@ -21,10 +22,14 @@ from ensemble.critic import (
     singability,
     tonal_conformity,
 )
-from ensemble.wolfson.chords import QUAL_DOM
+from ensemble.wolfson.chords import QUAL_DIM, QUAL_DOM, QUAL_MINOR
 from ensemble.wolfson.phrase_generator import REST_PITCH
+from ensemble.wolfson.scales import chord_root, chord_to_mode, scale_pitch_classes
 
 C_MAJOR = 0  # root=0 (C), quality_class=0 (QUAL_MAJOR) -> chord_idx = 0*4+0 = 0
+F_DOM = 5 * 4 + QUAL_DOM  # root=F(5) -- matches ensemble/sax.py's chord_idx mapping
+D_MINOR = 2 * 4 + QUAL_MINOR
+G_DIM = 7 * 4 + QUAL_DIM
 
 
 def notes_from_pitches(pitches, duration_beats=1.0):
@@ -110,11 +115,57 @@ def test_dissonance_semitone_clash_counts_as_dissonant():
 
 def test_dissonance_is_the_fraction_of_clashing_notes():
     # C (in scale), C# (clash -- leapt away to G next, not a passing tone),
-    # G (in scale), G# (clash -- last note, nothing to pass into) -- 2 of 4
-    # clash. Deliberately NOT a stepwise run -- see the _is_passing_tone
-    # tests below for that case specifically.
-    notes = notes_from_pitches([60, 61, 67, 68])
+    # G (in scale), D# (clash -- last note, nothing to pass into) -- 2 of 4
+    # clash. Deliberately NOT a stepwise run -- see the _is_passing_tone tests
+    # below for that case specifically. Uses C# and D#, not G#: G# is inside
+    # bebop_major's widened C-major reference (Phase 20's own b6 passing
+    # tone), so it wouldn't count as a clash at all -- see _dissonance_scale.
+    notes = notes_from_pitches([60, 61, 67, 63])
     assert dissonance(notes, C_MAJOR) == 0.5
+
+
+# ---------------------------------------------------------------------------
+# _dissonance_scale -- Phase 20, Lever A: widen the reference for dominant/
+# major chords to include a named bebop passing tone; minor/diminished are a
+# deliberate scope-cut, not an oversight.
+# ---------------------------------------------------------------------------
+
+
+def test_dissonance_scale_dominant_includes_the_bebop_maj7_passing_tone():
+    # F7: plain mixolydian is {5,7,9,10,0,2,3}; bebop_dom adds the maj7 (pc 4,
+    # E natural) -- the literal "E natural over F7" case that started this.
+    plain = scale_pitch_classes(chord_root(F_DOM), chord_to_mode(F_DOM))
+    widened = _dissonance_scale(F_DOM)
+    assert 4 not in plain
+    assert 4 in widened
+    assert plain <= widened  # nothing previously in-scale is lost
+
+
+def test_dissonance_scale_major_includes_the_bebop_b6_passing_tone():
+    # C major: plain ionian is {0,2,4,5,7,9,11}; bebop_major adds the b6 (pc 8).
+    plain = scale_pitch_classes(chord_root(C_MAJOR), chord_to_mode(C_MAJOR))
+    widened = _dissonance_scale(C_MAJOR)
+    assert 8 not in plain
+    assert 8 in widened
+    assert plain <= widened
+
+
+def test_dissonance_scale_minor_is_unchanged():
+    plain = scale_pitch_classes(chord_root(D_MINOR), chord_to_mode(D_MINOR))
+    assert _dissonance_scale(D_MINOR) == plain
+
+
+def test_dissonance_scale_diminished_is_unchanged():
+    plain = scale_pitch_classes(chord_root(G_DIM), chord_to_mode(G_DIM))
+    assert _dissonance_scale(G_DIM) == plain
+
+
+def test_dissonance_no_longer_flags_the_bebop_passing_tone_at_all():
+    # E natural (pc 4) over F7 -- previously out of scale (and previously
+    # excused only via the passing-tone exception, Phase 19); now simply IN
+    # the widened scale, not flagged as dissonant in the first place.
+    notes = notes_from_pitches([65, 64, 65])  # F, E, F -- E approached/left by leap either way is irrelevant now
+    assert dissonance(notes, F_DOM) == 0.0
 
 
 # ---------------------------------------------------------------------------

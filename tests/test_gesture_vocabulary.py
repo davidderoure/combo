@@ -46,6 +46,20 @@ def test_two_same_runs_fire_toggle_singability():
     assert [g.name for g in fired] == ["toggle_singability"]
 
 
+def test_two_separate_rests_fire_toggle_dissonance_avoidance():
+    vocab, fired = make_vocab()
+    feed(vocab, ["R", "R"])
+    # Exactly one fire, on the second R -- see DEFAULT_RULES' own comment on
+    # why this was verified empirically before being chosen.
+    assert [g.name for g in fired] == ["toggle_dissonance_avoidance"]
+
+
+def test_a_rest_interrupted_by_a_note_does_not_fire_toggle_dissonance_avoidance():
+    vocab, fired = make_vocab()
+    feed(vocab, ["R", "U", "R"])
+    assert fired == []
+
+
 def test_unrelated_labels_fire_nothing():
     vocab, fired = make_vocab()
     feed(vocab, ["U", "D", "S", "R"])

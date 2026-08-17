@@ -58,10 +58,26 @@ class GestureRule:
 # scope limit as handover()/reset_tempo() — a general "toggle ANY named metric"
 # would need the parameterised-gesture mechanism this module's own docstring
 # already flags as unbuilt; this is one fixed, named toggle.
+#
+# (Phase 20) A second toggle, for the sax generator's anti-dissonance selection
+# gate — two separate rests in a row, "R","R". Same 1-length-collision
+# constraint as above rules out "T" and "L" in ANY position of a new pattern
+# (not just as the whole pattern): a 1-length rule's tail-of-1 check also
+# matches the instant its own symbol arrives regardless of what a longer
+# candidate pattern was building toward, and rule-list order lets the
+# earlier-registered 1-length rule win the tie either way. "U","U"/"D","D" are
+# reserved as record markers (checked before this rule list, so a pattern
+# starting with either prefix would never reach here) and "S","S" is taken.
+# "R","R" was verified empirically before committing to it (same discipline
+# Phase 13 used to catch the "T","T" collision) — two genuinely separate rests
+# with nothing (no played note) between them, not just "R" appearing twice
+# somewhere nearby: a rest interrupted by any note-derived sub-gesture does
+# NOT fire, and ordinary varied playing with no rests at all doesn't either.
 DEFAULT_RULES: List[GestureRule] = [
     GestureRule(pattern=("L",), gesture=Gesture("handover")),
     GestureRule(pattern=("T",), gesture=Gesture("reset_tempo")),
     GestureRule(pattern=("S", "S"), gesture=Gesture("toggle_singability")),
+    GestureRule(pattern=("R", "R"), gesture=Gesture("toggle_dissonance_avoidance")),
 ]
 
 # Record markers (§10.2), chosen for a concrete reason, not arbitrarily: a single

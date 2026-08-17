@@ -520,3 +520,84 @@ def test_search_prefers_lower_dissonance_even_without_a_motif_target():
     # The winner's dissonance is never worse than any candidate's -- the
     # concrete "what's bad matters" proof, not just "some candidate was picked".
     assert sax_gen.dissonance_log[-1] == min(-k[0] for k in recomputed)
+
+
+def test_director_gesture_toggles_dissonance_mode():
+    """Phase 20: mirrors test_director_gesture_toggles_singability_weight above
+    exactly -- deterministic, checking sax_generator's exposed dissonance_mode
+    directly rather than re-deriving the effect statistically."""
+    from gesture.vocabulary import Gesture
+
+    def toggle_on_bar_zero(song, bar_index, timeline):
+        gesture = Gesture("toggle_dissonance_avoidance") if bar_index == 0 else None
+        return DirectorSignal(intensity=0.5, gesture=gesture)
+
+    director = Director(id="teacher", source="ai", signal_source=toggle_on_bar_zero)
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", seed=1)
+    sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+
+    assert sax_gen.dissonance_mode["enabled"] is True  # default, before any gesture arrives
+
+    Session(song=load_blues(), voices=[bass, sax], directors=[director]).generate()
+
+    assert sax_gen.dissonance_mode["enabled"] is False  # flipped off by the bar-0 gesture
+
+    # Toggling again (a second Session sharing the same sax_gen closure) flips it back on.
+    director2 = Director(id="teacher", source="ai", signal_source=toggle_on_bar_zero)
+    bass2 = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax2 = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+    Session(song=load_blues(), voices=[bass2, sax2], directors=[director2]).generate()
+    assert sax_gen.dissonance_mode["enabled"] is True
+
+
+def test_dissonance_mode_disabled_reverts_to_overall_only_selection():
+    """The concrete proof the toggle changes real selection outcomes, not just
+    a flag nobody reads: with dissonance_mode explicitly disabled, the winning
+    candidate is chosen by (motif_adherence, overall) alone -- same
+    spy-and-recompute technique as test_search_prefers_lower_dissonance_even_
+    without_a_motif_target, but asserting the OPPOSITE outcome now that the
+    gate is off."""
+    from ensemble.critic import dissonance, motif_adherence, musicality_score
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=5)
+        sax_gen.dissonance_mode["enabled"] = False
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert len(candidates) == 16  # 2 chunks * 8 candidates
+    last_chunk = candidates[-8:]
+
+    overall_only = [
+        (motif_adherence(notes, []), musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall)
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
+    best_overall_only = max(overall_only)
+    winner_notes = last_chunk[overall_only.index(best_overall_only)][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+
+    second_chunk_start = 4 * BEATS_PER_BAR
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+    # dissonance_log still reflects the real value even though it wasn't the
+    # deciding factor -- Phase 20's "always logged" guarantee, checked
+    # directly rather than assumed.
+    recomputed_dissonances = [dissonance(notes, kwargs["chord_idx"]) for _sp, kwargs, notes in last_chunk]
+    assert sax_gen.dissonance_log[-1] == recomputed_dissonances[overall_only.index(best_overall_only)]

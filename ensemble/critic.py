@@ -143,6 +143,32 @@ def _semitones_to_scale(pitch_class: int, scale: frozenset) -> int:
     return min((pitch_class - s) % 12 if (pitch_class - s) % 12 <= 6 else 12 - (pitch_class - s) % 12 for s in scale)
 
 
+_RICHER_MODE_FOR = {"ionian": "bebop_major", "mixolydian": "bebop_dom"}
+
+
+def _dissonance_scale(chord_idx: int) -> frozenset:
+    """The scale reference dissonance() judges against -- wider than
+    chord_to_mode's plain default. UNIONS the plain mode with a named
+    jazz-standard "richer" variant when one exists (nothing previously
+    in-scale is lost, only real, named tensions gain tolerance) rather than
+    replacing it -- e.g. mixolydian -> mixolydian | bebop_dom, recognising
+    the maj7-as-passing-tone vocabulary over a dominant chord (the original
+    "E natural over F7" example that started this). Minor and diminished
+    have no comparably-named richer variant in ensemble/wolfson/scales.py's
+    MODES table -- not invented, a named scope-cut, not an oversight
+    (`altered`/`lydian_dom` are real, available options for a bigger,
+    separate reharm-substitution idea, not reached for here). Doesn't touch
+    scales.py (the ported file) or generation-time bias at all -- checked
+    directly, ensemble/sax.py never passes scale_pitch_classes into
+    PhraseGenerator.generate(), so this only affects how already-generated
+    notes are JUDGED, not how they're generated."""
+    root = chord_root(chord_idx)
+    mode = chord_to_mode(chord_idx)
+    scale = scale_pitch_classes(root, mode)
+    richer = _RICHER_MODE_FOR.get(mode)
+    return scale | scale_pitch_classes(root, richer) if richer else scale
+
+
 def _is_passing_tone(real_notes: list, i: int) -> bool:
     """True if real_notes[i] is approached AND left by step (<=
     PASSING_TONE_MAX_STEP semitones), continuing in the SAME direction on both
@@ -193,7 +219,7 @@ def dissonance(notes: list, chord_idx: int) -> float:
     real = _real_notes(notes)
     if not real:
         return 0.0
-    scale = scale_pitch_classes(chord_root(chord_idx), chord_to_mode(chord_idx))
+    scale = _dissonance_scale(chord_idx)
     clashes = 0
     for i, n in enumerate(real):
         pc = n["pitch"] % 12

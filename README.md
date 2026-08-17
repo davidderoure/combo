@@ -393,6 +393,40 @@ passing tones are now less penalised in selection), of which 51.5% and 62.5%
 respectively were genuine passing tones, a real, repeatable majority rather
 than unexplained clashes.
 
+**The other two levers, built together** (Phase 20). Widening the scale
+`dissonance` itself judges against: `_dissonance_scale` (`ensemble/critic.py`)
+unions the plain per-quality mode with a named jazz-standard "richer" variant
+already sitting in `scales.py`'s `MODES` table but never wired to anything —
+`mixolydian | bebop_dom` for dominant chords (the literal "E natural over F7"
+case that started this), `ionian | bebop_major` for major chords (the b6).
+Checked directly before building it, not assumed: `ensemble/sax.py` never
+actually passes `scale_pitch_classes` into `PhraseGenerator.generate()` at
+all, so this is purely a critic-side accuracy fix — it doesn't touch
+generation-time bias or `scales.py` (the ported file). Minor/diminished have
+no comparably-named richer variant and stay unwidened, a named scope-cut, not
+an oversight. And an anti-dissonance toggle, reusing Phase 13's
+`toggle_singability` pattern exactly: two separate rests in a row
+(`gesture/vocabulary.py`'s new `("R","R")` rule) flips
+`dissonance_mode["enabled"]` off/on, checked every bar. Picking the pattern
+needed the same collision-avoidance care Phase 13 already established
+(`"T"`/`"L"` unusable in any position of a new pattern; `("U","U")`/`("D","D")`
+reserved as record-marker prefixes; `("S","S")` taken) — `("R","R")` was
+verified empirically before being chosen, the same discipline that originally
+caught the `("T","T")` collision: fires only on two genuinely separate rests
+with nothing between them, never on ordinary playing. `dissonance()` is still
+computed and logged every chunk regardless of the toggle — only whether it
+drives selection is gated. `out_of_key_check.py` updated to use
+`_dissonance_scale` (not the plain scale) so its own report matches what
+selection actually judges against: two more runs after the widened scale
+landed — 4.4% (65/1485) then 1.2% (16/1374), down from 3.2-4.2% — and the
+original "E natural over F7" example no longer appears at all, simply in-scale
+now rather than merely excused. Still explicitly deferred: the functional-
+context technique David flagged for later — over a fast-moving diatonic
+sequence like vi-ii-V-I, simplify and just play the tonic's scale throughout.
+`dissonance`/`musicality_score` only ever see one `chord_idx`, no chord-
+sequence look-ahead/behind at all — a real architectural gap, not a small
+follow-on like the other two levers were.
+
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
 in Phase 5 (every phase since had repeated some version of "a director-emitted
@@ -484,7 +518,8 @@ suite is no longer sub-second once torch is imported.
   recalled target rather than self-similarity), `dissonance` (Phase 18 — higher is
   WORSE, unlike every other function here; a badness signal for selection to
   minimise, not a goodness signal blended into `overall`; excuses genuine chromatic
-  passing tones since Phase 19, `_is_passing_tone`), `call_response_relatedness`,
+  passing tones since Phase 19, `_is_passing_tone`; judges against a widened,
+  jazz-aware scale since Phase 20, `_dissonance_scale`), `call_response_relatedness`,
   `singability`, `musicality_score`; every function pure and deterministic, no
   model inference), `roles.py` (DESIGN.md §2 — the
   same-instrument-doubling slice of role assignment: `default_accompanist_roles`,

@@ -47,6 +47,17 @@ passing tones, the rest unexplained clashes -- a real, repeatable majority,
 not a one-off. So the fix is doing what it was meant to: more chromatic
 motion is surviving, and a solid majority of what's flagged as "out of key"
 now has a real melodic justification rather than being an unexplained clash.
+
+Phase 20 (Lever A) widened the scale `dissonance` itself judges against --
+this script now uses the SAME reference (`_dissonance_scale`, not the plain
+chord_to_mode scale) so its own report matches what selection is actually
+doing. Two more 5-loop runs after that: 4.4% (65/1485) then 1.2% (16/1374) --
+lower than Phase 19's 3.2-4.2%, and the bebop maj7-over-dominant example that
+started all of this ("E natural over F7") no longer appears in the examples
+at all -- it's simply in-scale now, not merely excused. Of what's still
+flagged, 78.5% then 56.2% were genuine passing tones -- the widened scale
+mostly removed the *previously-miscounted* clashes (bebop tensions that were
+never really dissonant), leaving a real, still-mostly-explained remainder.
 """
 
 import argparse
@@ -54,10 +65,9 @@ from collections import Counter
 from pathlib import Path
 
 from ensemble import MACHINE_SPEED, Session, Voice
-from ensemble.critic import _is_passing_tone
+from ensemble.critic import _dissonance_scale, _is_passing_tone
 from ensemble.memory import RehearsalMemory
 from ensemble.sax import chord_to_wolfson_index, sax_generator
-from ensemble.wolfson.scales import chord_root, chord_to_mode, scale_pitch_classes
 from song import parse_chart
 
 import self_test as st
@@ -107,7 +117,10 @@ def main() -> None:
         for idx, event in enumerate(sax_events):
             chord = song.chord_at(event.start_beat)
             chord_idx = chord_to_wolfson_index(chord)
-            scale = scale_pitch_classes(chord_root(chord_idx), chord_to_mode(chord_idx))
+            # _dissonance_scale (Phase 20), not the plain chord_to_mode scale --
+            # this is the same reference dissonance() actually judges against
+            # now, so the report matches what selection is really doing.
+            scale = _dissonance_scale(chord_idx)
             pitch_class = event.pitch % 12
             total_notes += 1
             if pitch_class not in scale:

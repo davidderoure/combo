@@ -241,7 +241,45 @@ extended to break its report down by passing-tone-vs-clash (reusing
 output rose from 2.1% to 3.2-4.2% across two runs — expected, not a
 regression, since passing tones are now less penalised in selection — of
 which 51.5% and 62.5% respectively were genuine passing tones, a real,
-repeatable majority, not unexplained clashes. All with passing tests.
+repeatable majority, not unexplained clashes. The other two levers were built
+next, together (Phase 20): widening the scale `dissonance` itself judges
+against (`_dissonance_scale`, `ensemble/critic.py`) unions the plain
+per-quality mode with a named jazz-standard "richer" variant already sitting
+in `ensemble/wolfson/scales.py`'s `MODES` table but never wired to anything —
+`mixolydian | bebop_dom` for dominant chords (the literal "E natural over F7"
+case), `ionian | bebop_major` for major chords (the b6). Checked directly, not
+assumed, before building it: `ensemble/sax.py` never actually passes
+`scale_pitch_classes` into `PhraseGenerator.generate()` at all (it defaults to
+`None`, and the ported sampling loop only applies the bias `if
+scale_pitch_classes:`), so this is purely a critic-side accuracy fix — it
+doesn't touch generation-time bias or `scales.py` (the ported file) at all.
+Minor and diminished have no comparably-named richer variant and are left
+unwidened — a named scope-cut, not an oversight (`altered`/`lydian_dom` are
+real, available options for a bigger, separate reharm idea, not reached for
+here). And an anti-dissonance toggle, reusing Phase 13's `toggle_singability`
+director-gesture pattern exactly: two separate rests in a row
+(`gesture/vocabulary.py`'s new `("R","R")` rule) flips `ensemble/sax.py`'s new
+`dissonance_mode["enabled"]` off/on, checked every bar. Picking the pattern
+needed the same care Phase 13's postmortem already established — `"T"`/`"L"`
+are unusable anywhere in a new pattern (a 1-length rule's tail check matches
+the instant its own symbol arrives, in any position), `("U","U")`/`("D","D")`
+are reserved record-marker prefixes, `("S","S")` is taken — `("R","R")` was
+verified empirically before committing to it (the same discipline that caught
+the `("T","T")` collision originally): fires only on two genuinely separate
+rests with nothing between them, not on a rest interrupted by a note or on
+ordinary varied playing. `dissonance()` is still computed and logged every
+chunk-build regardless of the toggle — only whether it drives selection is
+gated. `out_of_key_check.py` updated to use `_dissonance_scale` (not the
+plain scale) so its own report matches what selection actually judges against
+— two more runs after Lever A landed: 4.4% (65/1485) then 1.2% (16/1374),
+down from Phase 19's 3.2-4.2%, and the original "E natural over F7" example
+no longer appears at all — simply in-scale now, not merely excused. Still
+explicitly deferred, named again rather than lost: the functional-context
+technique David flagged for later — over a fast-moving diatonic sequence like
+vi-ii-V-I, an improviser can often simplify and just play the tonic's scale
+throughout. `dissonance`/`musicality_score` only ever see one `chord_idx`
+today, no chord-sequence look-ahead/behind at all — a real architectural gap,
+not a small follow-on like the other two levers were. All with passing tests.
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a

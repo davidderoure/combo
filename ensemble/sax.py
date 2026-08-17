@@ -286,6 +286,18 @@ def sax_generator(
     every candidate). Defaults to 1: exactly one generate() call per chunk,
     exactly today's behaviour, unchanged.
 
+    The dissonance gate can be toggled live (Phase 20), the same director-
+    gesture pattern as toggle_singability: two separate rests in a row
+    (gesture/vocabulary.py's ("R","R") -> Gesture("toggle_dissonance_avoidance"))
+    flips it off/on, checked every bar so a mid-chunk gesture isn't missed.
+    dissonance() is still computed and logged every chunk-build regardless —
+    only whether it counts in the selection key is gated. A real, honest
+    reason a director might want it off: plenty of legitimate jazz vocabulary
+    (4ths, tritones, deliberately "outside" playing) is technically dissonant
+    by this module's own definition; the gate defaults ON (today's Phase 18/19
+    behaviour, unchanged) because David asked specifically about ordinary
+    melodic/singable soloing, not because avoidance is always correct.
+
     motif_recall_candidates, if given, overrides n_candidates specifically for
     a chunk that has a non-empty motif_targets — more search shots make it far
     more likely at least one candidate actually lands the motif, justified by
@@ -333,10 +345,13 @@ def sax_generator(
     phrase_gen = PhraseGenerator(instrument="sax", model_path=model_path)
     plan: deque = deque()
     critic_weights = dict(DEFAULT_WEIGHTS)
+    dissonance_mode = {"enabled": True}
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
         if director_signal.gesture is not None and director_signal.gesture.name == "toggle_singability":
             critic_weights["singability"] = 0.0 if critic_weights["singability"] else DEFAULT_WEIGHTS["singability"]
+        if director_signal.gesture is not None and director_signal.gesture.name == "toggle_dissonance_avoidance":
+            dissonance_mode["enabled"] = not dissonance_mode["enabled"]
 
         bar_start = bar_index * BEATS_PER_BAR
 
@@ -357,6 +372,7 @@ def sax_generator(
             best_notes = None
             best_score = None
             best_key = None
+            best_dissonance = None
             candidate_scores = []
             for _ in range(candidates_this_chunk):
                 candidate_notes = phrase_gen.generate(
@@ -377,17 +393,21 @@ def sax_generator(
                 # When motif_targets is empty and no candidate clashes, the first
                 # two terms are tied at (0.0, 0.0) for every candidate, so this is
                 # provably identical to comparing candidate_score.overall alone
-                # (Phase 14's original behaviour).
+                # (Phase 14's original behaviour). d is still computed and logged
+                # even when dissonance_mode is disabled (Phase 20) -- cheap, and
+                # keeps dissonance_log meaningful regardless of what's currently
+                # driving selection -- only whether it counts in the key is gated.
+                d = dissonance(candidate_notes, chord_idx)
                 key = (
-                    -dissonance(candidate_notes, chord_idx),
+                    -d if dissonance_mode["enabled"] else 0.0,
                     motif_adherence(candidate_notes, motif_targets),
                     candidate_score.overall,
                 )
                 if best_key is None or key > best_key:
-                    best_notes, best_score, best_key = candidate_notes, candidate_score, key
+                    best_notes, best_score, best_key, best_dissonance = candidate_notes, candidate_score, key, d
             notes = best_notes
             generate.last_candidate_scores = candidate_scores
-            generate.dissonance_log.append(-best_key[0])
+            generate.dissonance_log.append(best_dissonance)
             generate.motif_adherence_log.append(best_key[1])
 
             if memory is not None:
@@ -399,5 +419,9 @@ def sax_generator(
     generate.critic_weights = critic_weights  # exposed for testing -- see module docstring
     generate.last_candidate_scores = []  # populated on the first chunk-build; exposed for testing
     generate.motif_adherence_log = []  # one entry per chunk-build, the WINNING candidate's motif_adherence
-    generate.dissonance_log = []  # one entry per chunk-build, the WINNING candidate's dissonance (Phase 18)
+    generate.dissonance_log = []  # one entry per chunk-build, the WINNING candidate's actual dissonance
+                                    # (Phase 18) -- always the real value, even when dissonance_mode is
+                                    # disabled and isn't currently driving selection (Phase 20).
+    generate.dissonance_mode = dissonance_mode  # exposed for testing -- same "expose the mutable
+                                                  # dict directly" convention as critic_weights above
     return generate
