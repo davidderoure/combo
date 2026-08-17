@@ -7,8 +7,10 @@
 
 import argparse
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
+import ensemble.wolfson.phrase_generator as wolfson_phrase_generator
 from ensemble import MACHINE_SPEED, REAL_TIME, Session, Voice, chord_tone_generator, drum_generator
 from ensemble.comping import BUSY_THRESHOLD, INTENSITY_SPREAD, SPARSE_THRESHOLD, comping_generator
 from ensemble.director import Director, constant_director_source, ensemble_intensity_critic
@@ -19,7 +21,8 @@ from ensemble.sax import sax_generator
 from ensemble.timeline import BEATS_PER_BAR, Timeline
 from ensemble.transitions import TransitionController, scripted_gesture_source
 from gesture.vocabulary import Gesture
-from song import parse_chart
+from song import Changes, ChangesEvent, Section, Song, parse_chart
+from song.chord import Chord
 
 DEFAULT_CHART = Path(__file__).resolve().parent.parent / "songs" / "blues_in_f.chart"
 SAX_REGISTER = (55, 79)
@@ -282,6 +285,51 @@ def demo_sax_wolfson(chart_path: Path) -> None:
         sax_notes = [e for e in tl if e.voice_id == "sax"]
         avg_duration = sum(e.duration_beats for e in sax_notes) / len(sax_notes)
         print(f"    intensity={intensity}: {len(sax_notes)} sax notes, avg duration {avg_duration:.3f} beats")
+
+    print("\n  Multi-bar planning buffer (DESIGN.md §12, Phase 10): sax now plans")
+    print("  plan_bars ahead in ONE continuous generate() call per chunk instead of")
+    print("  one independent call per bar -- the model's own arc_position-driven bias")
+    print("  layers sweep across the real planned span instead of resetting every bar.")
+    print("  Chunk length is capped by the next chord change, so this varies with a")
+    print("  chart's harmonic rhythm -- shown on two charts to make that honest:\n")
+
+    with _counting_phrase_generator_calls() as counter:
+        blues_song = parse_chart(chart_path.read_text())
+        n_bars = int(blues_song.total_beats // BEATS_PER_BAR)
+        make_sax_session().generate(mode=MACHINE_SPEED)
+    print(f"    {chart_path.name} (chord changes almost every bar): "
+          f"{counter['calls']} generate() calls for {n_bars} bars")
+
+    slow_song = Song(
+        title="slow changes", changes=Changes([ChangesEvent(Chord.parse("F7"), 32.0)]),
+        form=[Section("A", 1)], tempo_bpm=120,
+    )
+    slow_bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    slow_sax = Voice(
+        id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
+        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7),
+    )
+    with _counting_phrase_generator_calls() as counter:
+        Session(song=slow_song, voices=[slow_bass, slow_sax]).generate(mode=MACHINE_SPEED)
+    print(f"    one chord held for 8 bars: {counter['calls']} generate() calls for 8 bars")
+
+
+@contextmanager
+def _counting_phrase_generator_calls():
+    """Spy on PhraseGenerator.generate's call count for the demo output above —
+    same technique as tests/test_sax_wolfson_integration.py's own spy."""
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    counter = {"calls": 0}
+
+    def counting_generate(self, *args, **kwargs):
+        counter["calls"] += 1
+        return original(self, *args, **kwargs)
+
+    wolfson_phrase_generator.PhraseGenerator.generate = counting_generate
+    try:
+        yield counter
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
 
 
 def main() -> None:

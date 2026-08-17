@@ -170,21 +170,39 @@ candidate for a future *comping* voice specifically — see DESIGN.md §12. Real
 inference (not a mock) runs in tests: `chord_to_wolfson_index` translates combo's
 `Chord` into Wolfson's chord vocabulary (a total, exhaustively-tested mapping);
 `sax_generator` builds a seed phrase from a target voice's recent notes (mirroring
-`comping_generator`'s lookback-window pattern) and clips the model's output onto
-the current bar — necessary because, verified empirically, `max_phrase_beats`
-doesn't actually bound the returned phrase's span. The director's aggregated
-intensity (DESIGN.md §11) now reaches this generation: `rhythmic_density` is the
+`comping_generator`'s lookback-window pattern). The director's aggregated
+intensity (DESIGN.md §11) reaches this generation too: `rhythmic_density` is the
 one bias parameter the model itself already frames as a general busyness dial
 ("0=lyrical/slow, 1=bebop/fast"), so `sax_generator` passes
 `director_signal.intensity` straight through — no translation function needed, and
 grounded in a real probe (0.723 vs. 0.419 beats average note duration at
-`rhythmic_density` 0.0 vs. 1.0) before the test threshold was picked. Deliberately
-deferred, same scope-cut discipline as every earlier phase: all ~11 of the model's
-OTHER rule-based bias knobs (energy arc, motif, register contrast, ...) stay at
-their defaults; there's no hidden-state continuity from one bar's generation to the
-next. This is also the **first piece needing a binary artifact not present in a
-fresh clone** — the trained weights (`ensemble/wolfson/models/sax_best.pt`) are
-gitignored, not committed (see Running, below), so its integration tests skip
+`rhythmic_density` 0.0 vs. 1.0) before the test threshold was picked.
+
+Sax also plans several bars ahead now (Phase 10), prompted by David asking directly
+whether bar-by-bar generation loses a soloist's "conscious planning." What planning
+means mechanically here: `sax_generator` generates a chord-consistent multi-bar span
+— capped by `plan_bars` (default 4, matching Wolfson's own native
+`MAX_PHRASE_BEATS`) or the next chord change, whichever is sooner, since
+`PhraseGenerator.generate()` only accepts one chord broadcast across a whole call —
+in ONE continuous call, so the model's own arc-position-driven bias layers (voice-
+leading, contour) sweep across the real planned span instead of resetting every
+bar, then dispenses one bar per `Session` call from an internal buffer, refilling
+only when exhausted (`_bars_until_chord_change`, `_split_phrase_into_bars`, both in
+`ensemble/sax.py`). No revision-on-mismatch mechanism exists: checked directly, a
+handover only ever changes `Song.form`, never `Song.changes`, and `chord_at` only
+reads `changes` — a plan's chord assumptions can never go stale, so building
+revision logic would have been untestable, unreachable code. `blues_in_f.chart`'s
+fast harmonic rhythm (chord changes almost every bar) limits the visible effect
+there (45 `generate()` calls for 60 bars); a chart with an 8-bar chord hold shows it
+clearly (2 calls for 8 bars) — both demonstrated in `ensemble/demo.py`, said
+honestly rather than only showing the flattering case. Deliberately still deferred,
+same scope-cut discipline as every earlier phase: all ~11 of the model's OTHER
+rule-based bias knobs (energy arc, motif, register contrast, ...) stay at their
+defaults; hidden-state continuity now exists *within* a planned chunk but still
+resets *between* chunks. This is also the **first piece needing a binary artifact
+not present in a fresh clone** — the trained weights
+(`ensemble/wolfson/models/sax_best.pt`) are gitignored, not committed (see Running,
+below), so its integration tests skip
 gracefully and its demo section degrades gracefully without them, and the test
 suite is no longer sub-second once torch is imported.
 
@@ -216,7 +234,8 @@ suite is no longer sub-second once torch is imported.
   `constant_director_source`, `ensemble_intensity_critic`), `transitions.py`
   (DESIGN.md §8 — `TransitionController`, `GestureSource`, `scripted_gesture_source`,
   `LiveGestureQueue`), `sax.py` (DESIGN.md §12 — real generation for the sax voice:
-  `chord_to_wolfson_index`, `sax_generator`).
+  `chord_to_wolfson_index`, `sax_generator`, `_bars_until_chord_change` +
+  `_split_phrase_into_bars` for the multi-bar planning buffer).
 - `ensemble/wolfson/` — ported generative core from wolfson (DESIGN.md §12):
   `lstm_model.py` (`PhraseModel`), `phrase_generator.py` (`PhraseGenerator`),
   `encoding.py`, `chords.py`, `scales.py`; provenance and exactly what changed

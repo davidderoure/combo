@@ -5,10 +5,12 @@ hasn't been copied in (gitignored — see README). Runs real inference throughou
 matching this codebase's no-mocking norm — measured ~11ms/call on CPU, fast enough
 that faking it would be needless."""
 
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
+import ensemble.wolfson.phrase_generator as wolfson_phrase_generator
 from ensemble.director import Director, constant_director_source
 from ensemble.generators import chord_tone_generator
 from ensemble.sax import sax_generator
@@ -16,7 +18,8 @@ from ensemble.session import Session
 from ensemble.timeline import BEATS_PER_BAR
 from ensemble.voice import Voice
 from ensemble.wolfson.phrase_generator import REST_PITCH
-from song import parse_chart
+from song import Changes, ChangesEvent, Section, Song, parse_chart
+from song.chord import Chord
 
 WEIGHTS_PATH = Path(__file__).resolve().parent.parent / "ensemble" / "wolfson" / "models" / "sax_best.pt"
 CHARTS_DIR = Path(__file__).resolve().parent.parent / "songs"
@@ -95,6 +98,71 @@ def test_director_intensity_shifts_average_note_duration():
     high_avg = average_sax_duration(make_session(seed=7, director=high).generate())
 
     assert low_avg - high_avg >= 0.1
+
+
+@contextmanager
+def counting_phrase_generator_calls():
+    """Spy on PhraseGenerator.generate's call count — wraps the real method,
+    delegates to it, counts invocations, restores the original after. Not a
+    mock: the real model still runs every call, matching this codebase's
+    no-mocking-framework norm and its own "verify via a spy, not independent
+    re-derivation" lesson (see the Phase 8 postmortem)."""
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    counter = {"calls": 0}
+
+    def counting_generate(self, *args, **kwargs):
+        counter["calls"] += 1
+        return original(self, *args, **kwargs)
+
+    wolfson_phrase_generator.PhraseGenerator.generate = counting_generate
+    try:
+        yield counter
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+
+def test_plan_buffer_makes_fewer_generate_calls_than_bars_on_blues():
+    """blues_in_f.chart changes chord almost every bar (checked directly against
+    the chart: F7 Bb7 F7 F7 | Bb7 Bb7 F7 F7 | C7 Bb7 F7 C7 -- only three 2-bar
+    same-chord holds in the whole 12-bar form) -- modest savings expected, not
+    dramatic. Said plainly: a real, honest limit of what planning can do on
+    THIS chart, not a flaw in the mechanism — see the slow-harmonic-rhythm test
+    below for where the mechanism's real effect is visible."""
+    song = load_blues()
+    n_bars = int(song.total_beats // BEATS_PER_BAR)
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax = Voice(
+        id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
+        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7),
+    )
+    with counting_phrase_generator_calls() as counter:
+        Session(song=song, voices=[bass, sax]).generate()
+    assert counter["calls"] < n_bars
+
+
+def test_plan_buffer_makes_far_fewer_calls_on_a_slow_harmonic_rhythm_chart():
+    """A directly-constructed Song with one chord held for 8 bars (32 beats) —
+    same Song-construction pattern as tests/test_transitions.py's own edge-case
+    tests. DEFAULT_PLAN_BARS=4 caps each chunk, so 8 bars should collapse into
+    at most 2 generate() calls — a clear demonstration of the mechanism's real
+    effect on a chart with a realistic-for-many-tunes harmonic rhythm, unlike
+    blues's fast changes above."""
+    song = Song(
+        title="slow changes",
+        changes=Changes([ChangesEvent(Chord.parse("F7"), 32.0)]),
+        form=[Section("A", 1)],
+        tempo_bpm=120,
+    )
+    n_bars = 8
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax = Voice(
+        id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
+        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7),
+    )
+    with counting_phrase_generator_calls() as counter:
+        Session(song=song, voices=[bass, sax]).generate()
+    assert counter["calls"] == 2  # ceil(8 bars / plan_bars=4) -- exact, not just "fewer"
+    assert counter["calls"] < n_bars
 
 
 def test_voice_order_does_not_affect_output():

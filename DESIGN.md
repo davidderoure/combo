@@ -52,8 +52,18 @@ now reaches that generation too: `rhythmic_density` is the one bias parameter th
 ported model itself already frames as a general busyness dial, so `sax_generator`
 passes `director_signal.intensity` straight through with no translation needed —
 verified with a real empirical probe (0.723 vs. 0.419 beats average note duration at
-`rhythmic_density` 0.0 vs. 1.0) before the test threshold was chosen. All with
-passing tests.
+`rhythmic_density` 0.0 vs. 1.0) before the test threshold was chosen. Sax now also
+plans several bars ahead — David asked directly whether generating bar-by-bar loses
+a soloist's "conscious planning," and the answer built into `sax_generator` is a
+buffer: it generates a chord-consistent multi-bar span in ONE continuous
+`generate()` call (the model's own arc-position-driven bias layers now sweep across
+that real span instead of resetting every bar) and dispenses one bar per `Session`
+call from the buffer, refilling only when it's exhausted. No revision-on-mismatch
+mechanism was needed — checked directly in `ensemble/transitions.py` and
+`song/song.py`, not assumed: a handover only ever changes `Song.form`, never
+`Song.changes`, and `chord_at` only ever reads `changes`, so a plan's chord
+assumptions can never go stale between when it's built and when it's dispensed.
+All with passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
 skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
@@ -69,9 +79,10 @@ real (non-virtual) hardware; within transitions, "pulling late" (no gesture for 
 yet), genuine total-length shortening, and wiring the director's gesture channel to
 `TransitionController`; within sax's real generation, all ~11 of the ported model's
 OTHER rule-based bias-layer knobs (contour, energy arc, motif, register contrast,
-etc. — left at their defaults, only `rhythmic_density` is wired), cross-bar
-hidden-state continuity (each bar re-primes from its own seed window), and any voice
-besides sax.
+etc. — left at their defaults, only `rhythmic_density` is wired), hidden-state
+continuity *between* planned chunks (it now exists *within* one chunk, which can
+span several bars, chord-hold permitting — a real extension from Phases 8/9, not a
+full solve), and any voice besides sax.
 See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into

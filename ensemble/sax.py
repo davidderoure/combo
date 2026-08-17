@@ -1,4 +1,4 @@
-"""Real generation for the sax voice — DESIGN.md §12, Phase 8 of the build plan.
+"""Real generation for the sax voice — DESIGN.md §12, Phases 8-10 of the build plan.
 
 The first voice to move off ensemble/generators.py's chord_tone_generator stub.
 Wraps ensemble/wolfson/'s ported PhraseGenerator (an LSTM adapted from David's
@@ -6,34 +6,56 @@ earlier system, Wolfson) behind combo's ordinary Generator interface. Everything
 here is combo-authored glue, not ported — structured the same context-driven shape
 as ensemble/drums.py and ensemble/comping.py, though determinism works differently
 here (see sax_generator's docstring: a global torch seed, not a local RNG), with
-three real integration seams:
+four real integration seams:
 
   1. chord_to_wolfson_index — combo's Chord -> Wolfson's chord vocabulary.
   2. _build_seed_phrase — a target voice's recent notes -> Wolfson's seed_phrase,
      mirroring comping_generator's lookback-window pattern exactly.
-  3. _place_phrase_in_bar — clips PhraseGenerator.generate()'s output onto the
-     current bar. Necessary because max_phrase_beats does NOT bound the returned
-     phrase's span (verified empirically: rest injection runs after the beat cap
-     and isn't counted against it) — see ensemble/wolfson/phrase_generator.py's
-     generate() docstring.
+  3. _bars_until_chord_change — how far ahead a plan can safely span without
+     crossing a chord change (PhraseGenerator.generate() only accepts one chord,
+     broadcast across the whole call — it can't represent a chord change mid-call).
+  4. _split_phrase_into_bars — splits a single multi-bar generate() call's output
+     across the bars it spans. Necessary because max_phrase_beats does NOT bound
+     the returned phrase's span (verified empirically: rest injection runs after
+     the beat cap and isn't counted against it) — see
+     ensemble/wolfson/phrase_generator.py's generate() docstring.
 
 The director's aggregated intensity (DESIGN.md §11) drives rhythmic_density —
 PhraseGenerator.generate()'s own docstring frames that parameter as "0-1 busyness
 ... 0=lyrical/slow, 1=bebop/fast", the one bias knob the model itself already
 treats as a general busyness dial, so no translation function is needed (both
 values are already 0-1 in the same direction, and generate() clamps internally).
+Intensity is captured once per planned chunk, not re-read bar to bar within a
+chunk — a deliberate simplification (see sax_generator's docstring), not a
+structural necessity like the chord case.
+
+Multi-bar planning (Phase 10, DESIGN.md §12): sax_generator plans `plan_bars`
+bars ahead in ONE continuous generate() call whenever its buffer runs out, rather
+than one independent call per bar. This is what "planning ahead" mechanically
+means here — the model's own arc_position-driven bias layers (voice-leading,
+contour) now sweep across the real planned span instead of resetting every bar.
+No revision-on-mismatch mechanism exists, or is needed: TransitionController's
+effective_song only ever replaces Song.form, and Song.chord_at only ever reads
+Song.changes — a handover can never change what chord a given bar resolves to,
+and Session.generate()'s bar_index always advances by exactly +1, so a plan's
+chord assumptions can never go stale between when it's built and when it's
+dispensed. Verified directly in ensemble/transitions.py and song/song.py, not
+assumed — building a revision mechanism anyway would be untested, unreachable
+code.
 
 Explicitly deferred (see DESIGN.md §12 for the full list): all ~11 of
 PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, motif,
 register contrast, etc.) are left at their defaults — nothing in combo supplies
-them yet, the same "deliberately dumb" spirit as chord_tone_generator itself. No
-hidden-state continuity across bar-to-bar calls (each bar re-primes from that
-bar's own seed). `register` is a backstop that drops out-of-range notes, not a
-real voicing control like it is in chord_tone_generator/comping_generator —
-Wolfson's trained pitch vocabulary is hard-clipped to MIDI 44-93 by the model
-itself.
+them yet, the same "deliberately dumb" spirit as chord_tone_generator itself.
+Hidden-state continuity now exists WITHIN a planned chunk (which can span several
+bars, chord-hold permitting) but still resets BETWEEN chunks — genuinely extended
+from Phase 8/9, not solved. `register` is a backstop that drops out-of-range
+notes, not a real voicing control like it is in
+chord_tone_generator/comping_generator — Wolfson's trained pitch vocabulary is
+hard-clipped to MIDI 44-93 by the model itself.
 """
 
+from collections import deque
 from typing import List, Optional, Tuple
 
 from song.chord import Chord
@@ -44,6 +66,8 @@ from .wolfson.chords import N_QUALITIES, QUAL_DIM, QUAL_DOM, QUAL_MAJOR, QUAL_MI
 from .wolfson.phrase_generator import REST_PITCH, PhraseGenerator
 
 DEFAULT_VELOCITY = 75
+DEFAULT_PLAN_BARS = 4  # matches Wolfson's own MAX_PHRASE_BEATS=16.0 -- 4 bars at
+                        # 4/4, "the model's own planning horizon," not arbitrary.
 
 # combo's 17 canonical qualities (song/chord.py's _QUALITY_ALIASES values) mapped
 # onto Wolfson's 4 harmonic-function classes. Root translation is the identity
@@ -81,52 +105,85 @@ def _build_seed_phrase(timeline: Timeline, target_voice_id: str, since_beat: flo
     ]
 
 
-def _place_phrase_in_bar(
-    notes: list, bar_start: float, bar_end: float, register: Tuple[int, int]
-) -> List[NoteEvent]:
-    """Clip PhraseGenerator.generate()'s output onto [bar_start, bar_end). Required
-    because max_phrase_beats doesn't bound the actual returned span (see module
-    docstring). Walks notes with a beat cursor: stops once the cursor reaches
-    bar_end, skips REST_PITCH sentinels as silent gaps (never emitted as events),
-    clips any note's duration so it can't cross bar_end, and drops notes outside
-    `register` — a backstop, not a real voicing control (see module docstring)."""
+def _bars_until_chord_change(song, start_beat: float, max_bars: int) -> int:
+    """How many bars from start_beat keep start_beat's own chord, capped at
+    max_bars — 1 means the very next bar already changes chord. Chord equality
+    (a frozen dataclass) does the comparison. Song.chord_at cycles through
+    Song.changes regardless of Song.form/section state (see module docstring),
+    so no section/handover special-casing is needed here."""
+    starting_chord = song.chord_at(start_beat)
+    for offset in range(1, max_bars):
+        if song.chord_at(start_beat + offset * BEATS_PER_BAR) != starting_chord:
+            return offset
+    return max_bars
+
+
+def _split_phrase_into_bars(
+    notes: list, plan_start: float, n_bars: int, register: Tuple[int, int]
+) -> List[List[NoteEvent]]:
+    """Split a single multi-bar generate() call's output across the n_bars it
+    spans, one continuous beat cursor from plan_start onward. Same discipline as
+    Phase 8's _place_phrase_in_bar (which this replaces): skips REST_PITCH
+    sentinels as silent gaps, drops notes outside `register` (a backstop, not a
+    real voicing control — see module docstring). Different from Phase 8's
+    single-bar version in one respect: a note whose remaining duration crosses a
+    bar boundary is SPLIT into one fragment per bar it spans (a tied long note),
+    rather than truncated with the remainder silently dropped — real musical
+    content that a single-bar clip would have lost. Always returns exactly
+    n_bars lists, some possibly empty."""
     low, high = register
-    events: List[NoteEvent] = []
-    cursor = bar_start
+    bars: List[List[NoteEvent]] = [[] for _ in range(n_bars)]
+    plan_end = plan_start + n_bars * BEATS_PER_BAR
+    cursor = plan_start
     for note in notes:
-        if cursor >= bar_end:
+        if cursor >= plan_end:
             break
-        duration = min(note["duration_beats"], bar_end - cursor)
-        if note["pitch"] != REST_PITCH and low <= note["pitch"] <= high:
-            velocity = max(1, min(127, round(DEFAULT_VELOCITY * note.get("velocity_scale", 1.0))))
-            events.append(
-                NoteEvent(
-                    voice_id="",  # stamped by Session once the voice is known
-                    pitch=note["pitch"],
-                    velocity=velocity,
-                    start_beat=cursor,
-                    duration_beats=duration,
+        pitch = note["pitch"]
+        keep = pitch != REST_PITCH and low <= pitch <= high
+        velocity = max(1, min(127, round(DEFAULT_VELOCITY * note.get("velocity_scale", 1.0))))
+        remaining = note["duration_beats"]
+        while remaining > 1e-9 and cursor < plan_end:
+            bar_idx = int((cursor - plan_start) // BEATS_PER_BAR)
+            bar_boundary = plan_start + (bar_idx + 1) * BEATS_PER_BAR
+            chunk = min(remaining, bar_boundary - cursor)
+            if keep:
+                bars[bar_idx].append(
+                    NoteEvent(
+                        voice_id="",  # stamped by Session once the voice is known
+                        pitch=pitch,
+                        velocity=velocity,
+                        start_beat=cursor,
+                        duration_beats=chunk,
+                    )
                 )
-            )
-        cursor += duration
-    return events
+            cursor += chunk
+            remaining -= chunk
+    return bars
 
 
 def sax_generator(
     register: Tuple[int, int],
     target_voice_id: str,
     lookback_bars: int = 2,
+    plan_bars: int = DEFAULT_PLAN_BARS,
     model_path: Optional[str] = None,
     seed: Optional[int] = None,
 ) -> Generator:
     """Build a generator that responds to target_voice_id's recent notes with a
-    real LSTM-generated phrase (ensemble/wolfson/), clipped to the current bar.
+    real LSTM-generated phrase (ensemble/wolfson/), planned plan_bars bars ahead
+    (chord-hold permitting — see _bars_until_chord_change) and dispensed one bar
+    per call from an internal buffer.
 
     The PhraseGenerator (and its ~3.5MB model weights) is constructed once here,
-    not per bar — reused across the whole session for efficiency. Each bar still
-    re-primes with hidden=None from that bar's own seed_phrase; there's no
-    persistent hidden-state continuity across bars (a real, named limitation vs.
-    live Wolfson, not a bug — see module docstring).
+    not per bar or per plan — reused across the whole session for efficiency.
+    The plan buffer refills only when exhausted: each refill is one continuous
+    generate() call (hidden state and arc_position sweeping across the whole
+    planned span, not resetting every bar — see module docstring), re-priming
+    with hidden=None only at the start of each new chunk. Director intensity is
+    captured once per chunk, at the moment it's built — a deliberate
+    simplification, not forced by anything structural (unlike the chord case,
+    where a plan literally cannot represent more than one chord per call): an
+    intensity swing mid-chunk doesn't trigger replanning.
 
     seed, if given, seeds TWO separate global RNGs at construction time, not a
     local generator object like drums.py/comping.py use — confirmed necessary
@@ -147,20 +204,24 @@ def sax_generator(
         torch.manual_seed(seed)
         random.seed(seed)
     phrase_gen = PhraseGenerator(instrument="sax", model_path=model_path)
+    plan: deque = deque()
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
         bar_start = bar_index * BEATS_PER_BAR
-        bar_end = bar_start + BEATS_PER_BAR
-        since_beat = max(0, bar_index - lookback_bars) * BEATS_PER_BAR
-        seed_phrase = _build_seed_phrase(timeline, target_voice_id, since_beat, bar_start)
 
-        chord_idx = chord_to_wolfson_index(song.chord_at(bar_start))
-        notes = phrase_gen.generate(
-            seed_phrase,
-            chord_idx=chord_idx,
-            max_phrase_beats=BEATS_PER_BAR,
-            rhythmic_density=director_signal.intensity,
-        )
-        return _place_phrase_in_bar(notes, bar_start, bar_end, register)
+        if not plan:
+            span_bars = _bars_until_chord_change(song, bar_start, plan_bars)
+            since_beat = max(0, bar_index - lookback_bars) * BEATS_PER_BAR
+            seed_phrase = _build_seed_phrase(timeline, target_voice_id, since_beat, bar_start)
+            chord_idx = chord_to_wolfson_index(song.chord_at(bar_start))
+            notes = phrase_gen.generate(
+                seed_phrase,
+                chord_idx=chord_idx,
+                max_phrase_beats=span_bars * BEATS_PER_BAR,
+                rhythmic_density=director_signal.intensity,
+            )
+            plan.extend(_split_phrase_into_bars(notes, bar_start, span_bars, register))
+
+        return plan.popleft()
 
     return generate

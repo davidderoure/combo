@@ -2,10 +2,16 @@
 real-inference behaviour (PhraseGenerator.generate, sax_generator end-to-end) is
 in tests/test_sax_wolfson_integration.py, which needs the real weights."""
 
+from song import Changes, ChangesEvent, Section, Song
 from song.chord import Chord, _QUALITY_ALIASES
 
-from ensemble.sax import _build_seed_phrase, _place_phrase_in_bar, chord_to_wolfson_index
-from ensemble.timeline import NoteEvent, Timeline
+from ensemble.sax import (
+    _bars_until_chord_change,
+    _build_seed_phrase,
+    _split_phrase_into_bars,
+    chord_to_wolfson_index,
+)
+from ensemble.timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from ensemble.wolfson.chords import QUAL_DIM, QUAL_DOM, QUAL_MAJOR, QUAL_MINOR
 from ensemble.wolfson.phrase_generator import REST_PITCH
 
@@ -50,47 +56,105 @@ def test_build_seed_phrase_translates_duration_exactly():
     assert (offset - onset) / seed[0]["beat_dur_sec"] == 1.75
 
 
-def test_place_phrase_in_bar_skips_rest_sentinels():
+def _song_with_changes(*chord_durations) -> Song:
+    """chord_durations: (Chord, duration_beats) pairs making up one chorus."""
+    events = [ChangesEvent(chord, duration) for chord, duration in chord_durations]
+    return Song(title="t", changes=Changes(events), form=[Section("A", 1)], tempo_bpm=120)
+
+
+def test_bars_until_chord_change_every_bar_returns_one():
+    song = _song_with_changes(
+        (Chord.parse("F7"), 4.0), (Chord.parse("Bb7"), 4.0), (Chord.parse("F7"), 4.0), (Chord.parse("C7"), 4.0)
+    )
+    assert _bars_until_chord_change(song, 0.0, max_bars=4) == 1
+
+
+def test_bars_until_chord_change_finds_a_two_bar_hold():
+    song = _song_with_changes((Chord.parse("F7"), 8.0), (Chord.parse("Bb7"), 4.0))
+    assert _bars_until_chord_change(song, 0.0, max_bars=4) == 2
+    # Starting mid-hold (bar 1 of the 2-bar F7): only 1 bar left before the change.
+    assert _bars_until_chord_change(song, BEATS_PER_BAR, max_bars=4) == 1
+
+
+def test_bars_until_chord_change_caps_at_max_bars():
+    song = _song_with_changes((Chord.parse("F7"), 16.0))  # one chord, 4 bars, no change ever
+    assert _bars_until_chord_change(song, 0.0, max_bars=3) == 3
+
+
+def test_split_phrase_into_bars_skips_rest_sentinels():
     notes = [{"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.0}]
     notes.insert(0, {"pitch": REST_PITCH, "duration_beats": 1.0, "velocity_scale": 1.0})
-    events = _place_phrase_in_bar(notes, bar_start=0.0, bar_end=4.0, register=REGISTER)
-    assert len(events) == 1
-    assert events[0].pitch == 60
-    assert events[0].start_beat == 1.0  # cursor advanced past the rest gap
+    bars = _split_phrase_into_bars(notes, plan_start=0.0, n_bars=1, register=REGISTER)
+    assert len(bars) == 1
+    assert len(bars[0]) == 1
+    assert bars[0][0].pitch == 60
+    assert bars[0][0].start_beat == 1.0  # cursor advanced past the rest gap
 
 
-def test_place_phrase_in_bar_clips_overrunning_note():
-    notes = [{"pitch": 60, "duration_beats": 3.5, "velocity_scale": 1.0}]
-    events = _place_phrase_in_bar(notes, bar_start=1.0, bar_end=4.0, register=REGISTER)
-    assert len(events) == 1
-    assert events[0].start_beat == 1.0
-    assert events[0].duration_beats == 3.0  # clipped to bar_end - bar_start
-
-
-def test_place_phrase_in_bar_drops_notes_starting_past_bar_end():
+def test_split_phrase_into_bars_drops_notes_starting_past_plan_end():
     notes = [
         {"pitch": 60, "duration_beats": 4.0, "velocity_scale": 1.0},
-        {"pitch": 62, "duration_beats": 1.0, "velocity_scale": 1.0},  # cursor now >= bar_end
+        {"pitch": 62, "duration_beats": 1.0, "velocity_scale": 1.0},  # cursor now >= plan_end
     ]
-    events = _place_phrase_in_bar(notes, bar_start=0.0, bar_end=4.0, register=REGISTER)
-    assert len(events) == 1
-    assert events[0].pitch == 60
+    bars = _split_phrase_into_bars(notes, plan_start=0.0, n_bars=1, register=REGISTER)
+    assert [e.pitch for e in bars[0]] == [60]
 
 
-def test_place_phrase_in_bar_drops_out_of_register_notes():
+def test_split_phrase_into_bars_drops_out_of_register_notes():
     notes = [
         {"pitch": REGISTER[0] - 1, "duration_beats": 1.0, "velocity_scale": 1.0},  # below
         {"pitch": REGISTER[1] + 1, "duration_beats": 1.0, "velocity_scale": 1.0},  # above
         {"pitch": REGISTER[0], "duration_beats": 1.0, "velocity_scale": 1.0},  # in range
     ]
-    events = _place_phrase_in_bar(notes, bar_start=0.0, bar_end=4.0, register=REGISTER)
-    assert len(events) == 1
-    assert events[0].pitch == REGISTER[0]
+    bars = _split_phrase_into_bars(notes, plan_start=0.0, n_bars=1, register=REGISTER)
+    assert [e.pitch for e in bars[0]] == [REGISTER[0]]
 
 
-def test_place_phrase_in_bar_scales_velocity():
+def test_split_phrase_into_bars_scales_velocity():
     notes = [{"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.25}]
-    events = _place_phrase_in_bar(notes, bar_start=0.0, bar_end=4.0, register=REGISTER)
+    bars = _split_phrase_into_bars(notes, plan_start=0.0, n_bars=1, register=REGISTER)
     from ensemble.sax import DEFAULT_VELOCITY
 
-    assert events[0].velocity == round(DEFAULT_VELOCITY * 1.25)
+    assert bars[0][0].velocity == round(DEFAULT_VELOCITY * 1.25)
+
+
+def test_split_phrase_into_bars_returns_n_bars_lists_even_if_some_are_empty():
+    notes = [{"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.0}]
+    bars = _split_phrase_into_bars(notes, plan_start=0.0, n_bars=3, register=REGISTER)
+    assert len(bars) == 3
+    assert [len(b) for b in bars] == [1, 0, 0]
+
+
+def test_split_phrase_into_bars_assigns_each_bar_its_own_notes():
+    notes = [
+        {"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.0},  # bar 0
+        {"pitch": 62, "duration_beats": 1.0, "velocity_scale": 1.0},  # bar 0
+        {"pitch": 64, "duration_beats": 2.5, "velocity_scale": 1.0},  # bar 0 -> spans into bar 1
+        {"pitch": 65, "duration_beats": 1.0, "velocity_scale": 1.0},  # bar 1
+    ]
+    bars = _split_phrase_into_bars(notes, plan_start=0.0, n_bars=2, register=REGISTER)
+    assert [e.pitch for e in bars[0]] == [60, 62, 64]
+    assert [e.pitch for e in bars[1]] == [64, 65]
+
+
+def test_split_phrase_into_bars_splits_a_note_crossing_a_boundary_into_fragments():
+    # plan_start=0.0, bar 0 = [0,4), bar 1 = [4,8). First note fits entirely in
+    # bar 0 (cursor 0->3). Second note (cursor 3->6) crosses the boundary at
+    # beat 4 -> should produce a 1-beat fragment finishing bar 0 and a 2-beat
+    # fragment starting bar 1, rather than being truncated with the remainder
+    # dropped. Third note (cursor 6->7) is entirely within bar 1.
+    notes = [
+        {"pitch": 60, "duration_beats": 3.0, "velocity_scale": 1.0},
+        {"pitch": 62, "duration_beats": 3.0, "velocity_scale": 1.0},
+        {"pitch": 65, "duration_beats": 1.0, "velocity_scale": 1.0},
+    ]
+    bars = _split_phrase_into_bars(notes, plan_start=0.0, n_bars=2, register=REGISTER)
+
+    assert [(e.pitch, e.start_beat, e.duration_beats) for e in bars[0]] == [
+        (60, 0.0, 3.0),
+        (62, 3.0, 1.0),  # clipped to bar 0's boundary at beat 4.0
+    ]
+    assert [(e.pitch, e.start_beat, e.duration_beats) for e in bars[1]] == [
+        (62, 4.0, 2.0),  # the remainder of the same note, continuing in bar 1
+        (65, 6.0, 1.0),
+    ]
