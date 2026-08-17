@@ -9,6 +9,7 @@ import pytest
 from ensemble.critic import (
     DEFAULT_WEIGHTS,
     _contour_string,
+    _is_passing_tone,
     _levenshtein,
     _semitones_to_scale,
     call_response_relatedness,
@@ -20,6 +21,7 @@ from ensemble.critic import (
     singability,
     tonal_conformity,
 )
+from ensemble.wolfson.chords import QUAL_DOM
 from ensemble.wolfson.phrase_generator import REST_PITCH
 
 C_MAJOR = 0  # root=0 (C), quality_class=0 (QUAL_MAJOR) -> chord_idx = 0*4+0 = 0
@@ -107,9 +109,76 @@ def test_dissonance_semitone_clash_counts_as_dissonant():
 
 
 def test_dissonance_is_the_fraction_of_clashing_notes():
-    # C (in scale), C# (clash), D (in scale), D# (clash) -- 2 of 4 clash.
-    notes = notes_from_pitches([60, 61, 62, 63])
+    # C (in scale), C# (clash -- leapt away to G next, not a passing tone),
+    # G (in scale), G# (clash -- last note, nothing to pass into) -- 2 of 4
+    # clash. Deliberately NOT a stepwise run -- see the _is_passing_tone
+    # tests below for that case specifically.
+    notes = notes_from_pitches([60, 61, 67, 68])
     assert dissonance(notes, C_MAJOR) == 0.5
+
+
+# ---------------------------------------------------------------------------
+# _is_passing_tone / dissonance's passing-tone exception
+# ---------------------------------------------------------------------------
+
+
+def test_is_passing_tone_descending_chromatic_run():
+    # David's own example: a chromatically descending line -- C, B, Bb, A.
+    # Bb (index 2) is approached (-1) and left (-1) in the same direction.
+    notes = notes_from_pitches([60, 59, 58, 57])
+    assert _is_passing_tone(notes, 2) is True
+
+
+def test_is_passing_tone_ascending_chromatic_run():
+    notes = notes_from_pitches([57, 58, 59, 60])
+    assert _is_passing_tone(notes, 2) is True
+
+
+def test_is_passing_tone_false_when_approached_by_step_but_left_by_leap():
+    notes = notes_from_pitches([60, 61, 70])
+    assert _is_passing_tone(notes, 1) is False
+
+
+def test_is_passing_tone_false_when_approached_by_leap_but_left_by_step():
+    notes = notes_from_pitches([60, 68, 67])
+    assert _is_passing_tone(notes, 1) is False
+
+
+def test_is_passing_tone_false_for_a_neighbour_tone_opposite_directions():
+    # C-D-C: D is approached (+2) and left (-2) in OPPOSITE directions -- a
+    # neighbour tone, not a passing tone. Deliberately excluded (see
+    # dissonance's own docstring), not silently included.
+    notes = notes_from_pitches([60, 62, 60])
+    assert _is_passing_tone(notes, 1) is False
+
+
+def test_is_passing_tone_false_at_start_or_end_of_phrase():
+    notes = notes_from_pitches([60, 61, 62])
+    assert _is_passing_tone(notes, 0) is False
+    assert _is_passing_tone(notes, 2) is False
+
+
+def test_is_passing_tone_false_when_either_side_exceeds_max_step():
+    notes = notes_from_pitches([60, 63, 65])  # first interval is a minor 3rd (3 semitones)
+    assert _is_passing_tone(notes, 1) is False
+
+
+def test_dissonance_excuses_a_genuine_passing_tone():
+    # F7 (mixolydian: F G A Bb C D Eb). G#4 (pc 8) is 1 semitone from both G
+    # and A -- clashes in isolation. Approached from G (+1) and left toward A
+    # (+1): a genuine ascending passing tone connecting two in-scale notes.
+    F7 = 5 * 4 + QUAL_DOM  # root=F(5) -- matches ensemble/sax.py's chord_idx mapping
+    passing = notes_from_pitches([67, 68, 69])  # G, G#, A
+    assert dissonance(passing, F7) == 0.0
+
+
+def test_dissonance_still_counts_the_same_pitch_when_not_a_passing_tone():
+    # Same dissonant note (G#), but approached by a leap instead of a step --
+    # no longer excused, back to counting as a clash. The concrete before/
+    # after proof the exception is about MELODIC CONTEXT, not the pitch alone.
+    F7 = 5 * 4 + QUAL_DOM
+    leapt_into = notes_from_pitches([60, 68, 69])  # C (leap), G#, A
+    assert dissonance(leapt_into, F7) == pytest.approx(1 / 3)
 
 
 # ---------------------------------------------------------------------------

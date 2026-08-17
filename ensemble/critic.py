@@ -65,6 +65,9 @@ DISSONANT_SEMITONE_DISTANCE = 1  # a note exactly this far from the nearest in-s
                                    # (read as deliberately "outside" rather than a clash) --
                                    # David's own musical judgment, not derived from anything
                                    # else in this codebase.
+PASSING_TONE_MAX_STEP = 2  # semitones -- standard tonal-theory "step" (minor or major
+                             # 2nd) on EITHER side of a passing tone; a placeholder like
+                             # every other constant here, not asserted as musically final.
 
 DEFAULT_WEIGHTS = {
     "tonal_conformity": 0.25,
@@ -140,6 +143,29 @@ def _semitones_to_scale(pitch_class: int, scale: frozenset) -> int:
     return min((pitch_class - s) % 12 if (pitch_class - s) % 12 <= 6 else 12 - (pitch_class - s) % 12 for s in scale)
 
 
+def _is_passing_tone(real_notes: list, i: int) -> bool:
+    """True if real_notes[i] is approached AND left by step (<=
+    PASSING_TONE_MAX_STEP semitones), continuing in the SAME direction on both
+    sides -- connects two flanking pitches as a genuine melodic passing tone,
+    the classical tonal-theory treatment of a dissonance (David's own example:
+    a chromatically descending bass line "justifies" the semitone deltas along
+    the way). Contrast a NEIGHBOUR tone, approached and left in OPPOSITE
+    directions (e.g. C-D-C) -- a related but distinct device, deliberately not
+    covered here. False at the very start/end of a phrase (no flanking note on
+    one side -- nothing to pass between). Operates on the same
+    _real_notes-filtered sequence every other function in this module already
+    uses -- rests are already ignored for interval/contour purposes elsewhere
+    (repetition, contour_smoothness), so this follows the same existing
+    convention, not a new inconsistency."""
+    if i == 0 or i == len(real_notes) - 1:
+        return False
+    prev_interval = real_notes[i]["pitch"] - real_notes[i - 1]["pitch"]
+    next_interval = real_notes[i + 1]["pitch"] - real_notes[i]["pitch"]
+    if abs(prev_interval) > PASSING_TONE_MAX_STEP or abs(next_interval) > PASSING_TONE_MAX_STEP:
+        return False
+    return (prev_interval > 0 and next_interval > 0) or (prev_interval < 0 and next_interval < 0)
+
+
 def dissonance(notes: list, chord_idx: int) -> float:
     """Fraction of real notes that CLASH with the chord: pitch class out of
     scale and exactly DISSONANT_SEMITONE_DISTANCE semitones from the nearest
@@ -150,6 +176,15 @@ def dissonance(notes: list, chord_idx: int) -> float:
     further than DISSONANT_SEMITONE_DISTANCE from the scale isn't counted
     here at all (reads as deliberately "outside" rather than a clash, David's
     own judgment -- being further from the scale is not treated as worse).
+
+    A genuine chromatic PASSING tone (_is_passing_tone above) is excused, not
+    counted -- a real, distinct exception, not a loophole: the note still
+    clashes with the chord in isolation, but its melodic context (approached
+    and left by step, continuing through) is what tonal theory itself uses to
+    justify a dissonance. A NEIGHBOUR tone (approached/left in opposite
+    directions) is a related, still-uncovered case, named as a deliberate
+    scope-cut, not an oversight.
+
     Higher is worse, unlike every other function in this module -- this is a
     badness signal for selection to minimise (ensemble/sax.py), not a
     goodness signal to blend into MusicalityScore/DEFAULT_WEIGHTS below,
@@ -159,12 +194,16 @@ def dissonance(notes: list, chord_idx: int) -> float:
     if not real:
         return 0.0
     scale = scale_pitch_classes(chord_root(chord_idx), chord_to_mode(chord_idx))
-    clashes = sum(
-        1
-        for n in real
-        if n["pitch"] % 12 not in scale
-        and _semitones_to_scale(n["pitch"] % 12, scale) == DISSONANT_SEMITONE_DISTANCE
-    )
+    clashes = 0
+    for i, n in enumerate(real):
+        pc = n["pitch"] % 12
+        if pc in scale:
+            continue
+        if _semitones_to_scale(pc, scale) != DISSONANT_SEMITONE_DISTANCE:
+            continue
+        if _is_passing_tone(real, i):
+            continue
+        clashes += 1
     return clashes / len(real)
 
 

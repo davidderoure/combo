@@ -218,8 +218,30 @@ rather than one more positively-weighted ingredient in `overall`'s blend.
 to choose among. Result, reproduced across two separate 5-loop runs: 2.1% out
 of key (31/1505, then 32/1525), down from ~16-22% — not zero (the model can
 still generate an all-clashing batch, just increasingly rarely as
-`n_candidates` grows), but a real, repeatable, ~8-10x reduction. All with
-passing tests.
+`n_candidates` grows), but a real, repeatable, ~8-10x reduction. Discussing
+that result, David raised a real nuance: plenty of legitimate jazz vocabulary
+— 4ths, tritones, maj7 as a bebop passing tone over a dominant chord — is
+technically "dissonant" by a plain scale-membership check, and flatly
+penalising all of it risks blander soloing, not just cleaner. Of three levers
+that came out of that discussion (widen the per-quality scale reference;
+an anti-dissonance mode/strength toggle, reusing Phase 13's
+`toggle_singability` pattern; tolerate genuine passing tones), David asked to
+scope the passing-tone case first, since — unlike the other two — it needs no
+new architecture: a direct refinement of `dissonance` itself (Phase 19). New
+`_is_passing_tone(real_notes, i)`: a flagged note approached AND left by step
+(`PASSING_TONE_MAX_STEP`, a placeholder set to a major 2nd), continuing in the
+SAME direction, is excused — the classical tonal-theory treatment of a
+dissonance (David's own example: "a chromatically descending bass line is
+strong in itself and justifies the one-semitone deltas"). A NEIGHBOUR tone
+(approached/left in OPPOSITE directions, e.g. C-D-C) is a related, distinct
+device, deliberately not covered — named as a scope-cut, not an oversight, same
+as the wider-scales and toggle-mode levers still sitting open. `out_of_key_check.py`
+extended to break its report down by passing-tone-vs-clash (reusing
+`_is_passing_tone` directly): the out-of-key rate that survives into final
+output rose from 2.1% to 3.2-4.2% across two runs — expected, not a
+regression, since passing tones are now less penalised in selection — of
+which 51.5% and 62.5% respectively were genuine passing tones, a real,
+repeatable majority, not unexplained clashes. All with passing tests.
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a

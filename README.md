@@ -365,6 +365,34 @@ reproduced across two separate 5-loop runs: 2.1% out of key (31/1505, then
 32/1525) — down from ~16-22%, an ~8-10x reduction, not zero (a batch can still
 come up all-clashing, just increasingly rarely as `n_candidates` grows).
 
+**A passing-tone exception, the first of three follow-on levers** (Phase 19).
+Discussing that result, David raised a real nuance: plenty of legitimate jazz
+vocabulary — 4ths, tritones, maj7 as a bebop passing tone over a dominant
+chord — is technically dissonant by a plain scale-membership check, and
+flatly penalising all of it risks blander soloing, not cleaner. Three levers
+came out of that discussion: widen the per-quality scale reference
+(`scales.py`'s `MODES` already defines `bebop_dom`/`altered`/`lydian_dom`,
+just never wired to any chord quality); an anti-dissonance mode/strength
+toggle, reusing Phase 13's `toggle_singability` director-gesture pattern; and
+tolerating genuine passing tones. David asked to scope the last one first,
+since it needs no new architecture — a direct refinement of `dissonance`
+itself, not a new metric or a change to `ensemble/sax.py`'s selection key.
+New `_is_passing_tone`: a flagged note approached AND left by step
+(`PASSING_TONE_MAX_STEP`, a placeholder set to a major 2nd), continuing in
+the SAME direction, is excused — the classical tonal-theory treatment of a
+dissonance (David's own example: "a chromatically descending bass line is
+strong in itself and justifies the one-semitone deltas"). A NEIGHBOUR tone
+(approached and left in OPPOSITE directions, e.g. C-D-C) is a related,
+distinct device, deliberately left uncovered, not an oversight — same as the
+other two levers, both still open. `out_of_key_check.py` now breaks its
+report down by passing-tone-vs-clash (reusing `_is_passing_tone` directly,
+the same "verify via the same computation" precedent used everywhere else in
+this codebase): the out-of-key rate that survives into final output rose to
+3.2-4.2% across two runs (up from 2.1% — expected, not a regression, since
+passing tones are now less penalised in selection), of which 51.5% and 62.5%
+respectively were genuine passing tones, a real, repeatable majority rather
+than unexplained clashes.
+
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
 in Phase 5 (every phase since had repeated some version of "a director-emitted
@@ -455,7 +483,8 @@ suite is no longer sub-second once torch is imported.
   (Phase 17 — distinct from `repetition`, measures adherence to an externally
   recalled target rather than self-similarity), `dissonance` (Phase 18 — higher is
   WORSE, unlike every other function here; a badness signal for selection to
-  minimise, not a goodness signal blended into `overall`), `call_response_relatedness`,
+  minimise, not a goodness signal blended into `overall`; excuses genuine chromatic
+  passing tones since Phase 19, `_is_passing_tone`), `call_response_relatedness`,
   `singability`, `musicality_score`; every function pure and deterministic, no
   model inference), `roles.py` (DESIGN.md §2 — the
   same-instrument-doubling slice of role assignment: `default_accompanist_roles`,
