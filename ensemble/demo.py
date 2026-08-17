@@ -15,6 +15,7 @@ from ensemble.director import Director, constant_director_source, ensemble_inten
 from ensemble.drums import ACOUSTIC_SNARE, CLOSED_HI_HAT, RIDE_CYMBAL_1
 from ensemble.listening import density as listening_density
 from ensemble.listening import synthetic_varying_density_generator
+from ensemble.sax import sax_generator
 from ensemble.timeline import BEATS_PER_BAR, Timeline
 from ensemble.transitions import TransitionController, scripted_gesture_source
 from gesture.vocabulary import Gesture
@@ -24,7 +25,9 @@ DEFAULT_CHART = Path(__file__).resolve().parent.parent / "songs" / "blues_in_f.c
 SAX_REGISTER = (55, 79)
 DRUM_REGISTER = (35, 59)  # not musically meaningful for percussion, kept for Voice's shape
 KEYS_REGISTER = (48, 72)
+BASS_REGISTER = (28, 52)
 COMPING_LOOKBACK_BARS = 2
+SAX_WEIGHTS_PATH = Path(__file__).resolve().parent / "wolfson" / "models" / "sax_best.pt"
 
 GM_PERCUSSION_NAMES = {
     ACOUSTIC_SNARE: "Snare",
@@ -228,6 +231,46 @@ def demo_transitions(chart_path: Path) -> None:
         print(f"    bar 36, {label}: {names}")
 
 
+def demo_sax_wolfson(chart_path: Path) -> None:
+    print("\n--- Real generation: sax voice (Wolfson-adapted LSTM, DESIGN.md §12) ---")
+    if not SAX_WEIGHTS_PATH.exists():
+        print(f"  sax_best.pt not found at {SAX_WEIGHTS_PATH}")
+        print("  Copy it in from ~/wolfson/models/sax_best.pt to run this section (see README).")
+        print("  Skipping — the other four demo sections above don't need it.")
+        return
+
+    print("Bass is chord_tone_generator (a real instrument's melodic line, not a")
+    print(f"synthetic fixture, unlike demo_comping's soloist) — its notes over the")
+    print(f"previous {COMPING_LOOKBACK_BARS} bars become the sax's seed_phrase. Bar 0 has an empty")
+    print("seed (nothing played yet) -- chord-conditioned generation only, printed")
+    print("below to show that's a real, handled case, not a crash. All ~12 of the")
+    print("model's rule-based bias knobs (energy arc, motif, register contrast, ...)")
+    print("are left at their defaults -- see ensemble/sax.py's module docstring.\n")
+
+    song = parse_chart(chart_path.read_text())
+    bass = Voice(
+        id="bass",
+        instrument="bass",
+        register=BASS_REGISTER,
+        source="ai",
+        generator=chord_tone_generator(BASS_REGISTER),
+    )
+    sax = Voice(
+        id="sax",
+        instrument="sax",
+        register=SAX_REGISTER,
+        source="ai",
+        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7),
+    )
+    session = Session(song=song, voices=[bass, sax])
+    timeline = session.generate(mode=MACHINE_SPEED)
+
+    for event in timeline:
+        if event.start_beat >= 3 * BEATS_PER_BAR:  # first three bars are enough to show it working
+            break
+        print(f"beat {event.start_beat:6.1f}  {event.voice_id:>4}  {note_name(event.pitch):>4}  vel={event.velocity}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--chart", type=Path, default=DEFAULT_CHART)
@@ -238,6 +281,7 @@ def main() -> None:
     demo_comping(args.chart)
     demo_director(args.chart)
     demo_transitions(args.chart)
+    demo_sax_wolfson(args.chart)
 
 
 if __name__ == "__main__":

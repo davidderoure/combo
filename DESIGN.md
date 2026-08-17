@@ -44,7 +44,10 @@ existing generator picks this up with zero code changes, since `Session` now pas
 an *effective* (possibly form-truncated) `Song` through the same parameter slot they
 already read from; proven against a real consumer (`drum_generator`'s density shifts
 sections early), not just checked in isolation. This is the first real slice of the
-long-referenced `ArcController`. All with passing tests.
+long-referenced `ArcController`. And the sax voice's stub generator has been replaced
+with a real generative model (`ensemble/sax.py`, `ensemble/wolfson/`) — an LSTM
+adapted from Wolfson, David's earlier one-voice system — the first of the ensemble's
+voices to move off `chord_tone_generator` (§12). All with passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
 skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
@@ -58,7 +61,10 @@ exist yet; within the director, a consumer for the gesture channel and batch-mod
 scoring; within MIDI input, the audience/room-mic path, and any verification against
 real (non-virtual) hardware; within transitions, "pulling late" (no gesture for it
 yet), genuine total-length shortening, and wiring the director's gesture channel to
-`TransitionController`.
+`TransitionController`; within sax's real generation, all ~12 of the ported model's
+rule-based bias-layer knobs (left at their defaults — nothing supplies them yet),
+cross-bar hidden-state continuity (each bar re-primes from its own seed window),
+director-signal-driven modulation, and any voice besides sax.
 See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into
@@ -551,8 +557,20 @@ That said, real overlap is worth taking seriously, not dismissing:
 everything from scratch — in particular, `DYCI2/Dicy2-python`'s generative core is a
 candidate reusable substrate for some voices, with combo's actual novel contribution
 being the layers on top (gesture vocabulary and its possible emergence, ensemble
-form/song identity, self-play + emergent tunes, the musical director). Not yet decided
-which voices, if any, would actually use it — a sketching-phase question.
+form/song identity, self-play + emergent tunes, the musical director).
+
+**Resolved for the sax voice** (Phase 8 of the build plan): adapted Wolfson's LSTM,
+not `Dicy2-python`. Wolfson's separable generative core (the trained model + its token
+vocabulary, `ensemble/wolfson/`) is genuinely generative — origination, matching
+combo's own aim, not recombination — and proven live. `Dicy2-python` was ruled out for
+this phase on practical grounds, not philosophical ones: it isn't pip-installable
+(git-clone-with-submodules, macOS+Python-3.9-only), and it's **GPLv3-licensed**, a real
+concern for combo specifically since this is a public repo with no LICENSE file —
+pulling in a GPLv3 dependency would effectively force combo's own licensing. It remains
+a documented, deferred candidate for a **future comping voice** specifically
+(recombination/corpus-navigation fits accompaniment's idiomatic-vocabulary-reuse
+better than a soloed line) — not attempted now. Which voices beyond sax would use
+either substrate, if any, is still a sketching-phase question.
 
 ## 13. Explicitly out of scope (for now)
 

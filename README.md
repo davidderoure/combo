@@ -12,7 +12,7 @@ recurring "tunes" of its own.
 
 ## Current status
 
-Early build-out, seven pieces in so far. First: a **gesture recognition** layer for
+Early build-out, eight pieces in so far. First: a **gesture recognition** layer for
 monophonic note streams (bass, sax, or any instrument via a pitch-to-MIDI tracker, e.g.
 a Sonuus i2M — but equally an AI voice's own generated output), so any performer, human
 or AI, can cue the ensemble — handovers, dialogue — using a small vocabulary of
@@ -156,6 +156,32 @@ the *total* performance length (a handover reallocates which section plays when,
 within the same nominal duration), and wiring the director's gesture channel to this
 mechanism.
 
+The eighth piece is **real generation for the sax voice** (DESIGN.md §12,
+`ensemble/wolfson/` + `ensemble/sax.py`) — the first voice to move off
+`chord_tone_generator`. `ensemble/wolfson/` is a near-verbatim port of the separable
+generative core of **wolfson** (David's earlier system): the trained LSTM
+(`PhraseModel`), its token vocabulary, and its full inference-time bias-layer
+pipeline — see the module's own docstring for exactly what changed mechanically
+(relative imports, inlined constants) versus what's an unmodified port. `IRCAM`'s
+`DYCI2/Dicy2-python` was considered and set aside for this phase on practical
+grounds (not pip-installable, macOS+Python-3.9-only, and GPLv3-licensed — a real
+concern for a public repo with no LICENSE file), and kept as a documented, deferred
+candidate for a future *comping* voice specifically — see DESIGN.md §12. Real
+inference (not a mock) runs in tests: `chord_to_wolfson_index` translates combo's
+`Chord` into Wolfson's chord vocabulary (a total, exhaustively-tested mapping);
+`sax_generator` builds a seed phrase from a target voice's recent notes (mirroring
+`comping_generator`'s lookback-window pattern) and clips the model's output onto
+the current bar — necessary because, verified empirically, `max_phrase_beats`
+doesn't actually bound the returned phrase's span. Deliberately deferred, same
+scope-cut discipline as every earlier phase: all ~12 of the model's rule-based bias
+knobs (energy arc, motif, register contrast, ...) stay at their defaults; there's no
+hidden-state continuity from one bar's generation to the next; `DirectorSignal` is
+accepted and ignored. This is also the **first piece needing a binary artifact not
+present in a fresh clone** — the trained weights (`ensemble/wolfson/models/
+sax_best.pt`) are gitignored, not committed (see Running, below), so its
+integration tests skip gracefully and its demo section degrades gracefully without
+them, and the test suite is no longer sub-second once torch is imported.
+
 ## Layout
 
 - `gesture/recognizer.py` — the ported sub-gesture state machine (no MIDI/IO deps)
@@ -183,11 +209,19 @@ mechanism.
   — `DirectorSignal`, `Director`, `aggregate_director_signals`,
   `constant_director_source`, `ensemble_intensity_critic`), `transitions.py`
   (DESIGN.md §8 — `TransitionController`, `GestureSource`, `scripted_gesture_source`,
-  `LiveGestureQueue`).
+  `LiveGestureQueue`), `sax.py` (DESIGN.md §12 — real generation for the sax voice:
+  `chord_to_wolfson_index`, `sax_generator`).
+- `ensemble/wolfson/` — ported generative core from wolfson (DESIGN.md §12):
+  `lstm_model.py` (`PhraseModel`), `phrase_generator.py` (`PhraseGenerator`),
+  `encoding.py`, `chords.py`, `scales.py`; provenance and exactly what changed
+  mechanically vs. the source is documented in `__init__.py`. `models/` is
+  gitignored — copy `sax_best.pt` in manually (see Running, below).
 - `tests/test_recognizer.py`, `tests/test_gesture_vocabulary.py`, `tests/test_song.py`,
   `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
   `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py`,
-  `tests/test_transitions.py` — no MIDI hardware needed
+  `tests/test_transitions.py`, `tests/test_sax.py` — no MIDI hardware needed
+- `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
+  skips cleanly if they're not present (see Running, below)
 - `listen.py` — small runnable script: starts every source in `config.MIDI_SOURCES`,
   prints recognised gestures (performers) and live intensity (directors)
 - `gesture/demo.py` — small runnable script: replays synthetic gesture sequences
@@ -196,16 +230,29 @@ mechanism.
 - `ensemble/demo.py` — small runnable script: generates a chart's worth of stub sax +
   drums output and prints it, then separate demonstrations of comping's duck/fill
   behaviour, the director's intensity dial (low vs. high, plus the AI critic reading
-  the sax+drums session), and a scripted handover shifting section boundaries
+  the sax+drums session), a scripted handover shifting section boundaries, and (if
+  `sax_best.pt` is present) real generation for the sax voice
   (`python -m ensemble.demo`)
 
 ## Running
 
 ```
-pip install -r requirements.txt
+pip install -r requirements.txt   # now pulls in torch — heavier/slower than before
 python listen.py --list          # show available MIDI ports
 python listen.py                 # start every source in config.MIDI_SOURCES
 python -m gesture.demo           # no MIDI needed
-python -m ensemble.demo          # no MIDI needed
+python -m ensemble.demo          # no MIDI needed; sax section needs sax_best.pt (below)
 pytest
 ```
+
+Real generation for the sax voice (DESIGN.md §12) needs the trained model weights,
+which aren't committed to this repo (gitignored — see `.gitignore`). Copy them in
+manually:
+
+```
+cp ~/wolfson/models/sax_best.pt ensemble/wolfson/models/sax_best.pt
+```
+
+Without them, `pytest` skips `tests/test_sax_wolfson_integration.py` and
+`ensemble/demo.py`'s sax section prints a message and skips — everything else runs
+unaffected.

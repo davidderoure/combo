@@ -3,3 +3,9 @@ __pycache__/
 .venv/
 .DS_Store
 .pytest_cache/
+
+# Trained model weights (ensemble/sax.py, DESIGN.md §12) — kept out of the public
+# repo both because they're a binary build artifact and because they're derived
+# from training on the Weimar Jazz Database, which carries its own research-use
+# terms. Copy in manually from ~/wolfson/models/sax_best.pt — see README.
+ensemble/wolfson/models/
