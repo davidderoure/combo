@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from ensemble.director import Director, constant_director_source
 from ensemble.generators import chord_tone_generator
 from ensemble.sax import sax_generator
 from ensemble.session import Session
@@ -32,7 +33,7 @@ def load_blues():
     return parse_chart((CHARTS_DIR / "blues_in_f.chart").read_text())
 
 
-def make_session(seed: int) -> Session:
+def make_session(seed: int, director: Director = None) -> Session:
     bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
     sax = Voice(
         id="sax",
@@ -41,7 +42,7 @@ def make_session(seed: int) -> Session:
         source="ai",
         generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=seed),
     )
-    return Session(song=load_blues(), voices=[bass, sax])
+    return Session(song=load_blues(), voices=[bass, sax], directors=[director] if director else [])
 
 
 def test_same_seed_is_deterministic():
@@ -74,6 +75,26 @@ def test_sax_events_never_cross_their_own_bar_boundary():
 def test_no_rest_sentinel_ever_becomes_an_event():
     timeline = make_session(seed=3).generate()
     assert all(e.pitch != REST_PITCH for e in timeline)
+
+
+def average_sax_duration(timeline) -> float:
+    sax_notes = [e for e in timeline if e.voice_id == "sax"]
+    return sum(e.duration_beats for e in sax_notes) / len(sax_notes)
+
+
+def test_director_intensity_shifts_average_note_duration():
+    """Grounded in a real empirical probe (see the Phase 9 plan): rhythmic_density
+    0.0 vs 1.0 produced average note durations of 0.723 vs 0.419 beats over 25
+    one-shot calls. 0.1 beats is a generous margin against that ~0.3-beat gap,
+    safe even with the different bar-by-bar chord/seed context a real chart
+    provides versus that probe's fixed synthetic seed — not flaky."""
+    low = Director(id="d", source="ai", signal_source=constant_director_source(0.0))
+    high = Director(id="d", source="ai", signal_source=constant_director_source(1.0))
+
+    low_avg = average_sax_duration(make_session(seed=7, director=low).generate())
+    high_avg = average_sax_duration(make_session(seed=7, director=high).generate())
+
+    assert low_avg - high_avg >= 0.1
 
 
 def test_voice_order_does_not_affect_output():

@@ -47,7 +47,13 @@ sections early), not just checked in isolation. This is the first real slice of 
 long-referenced `ArcController`. And the sax voice's stub generator has been replaced
 with a real generative model (`ensemble/sax.py`, `ensemble/wolfson/`) — an LSTM
 adapted from Wolfson, David's earlier one-voice system — the first of the ensemble's
-voices to move off `chord_tone_generator` (§12). All with passing tests.
+voices to move off `chord_tone_generator` (§12). The director's aggregated intensity
+now reaches that generation too: `rhythmic_density` is the one bias parameter the
+ported model itself already frames as a general busyness dial, so `sax_generator`
+passes `director_signal.intensity` straight through with no translation needed —
+verified with a real empirical probe (0.723 vs. 0.419 beats average note duration at
+`rhythmic_density` 0.0 vs. 1.0) before the test threshold was chosen. All with
+passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
 skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
@@ -61,10 +67,11 @@ exist yet; within the director, a consumer for the gesture channel and batch-mod
 scoring; within MIDI input, the audience/room-mic path, and any verification against
 real (non-virtual) hardware; within transitions, "pulling late" (no gesture for it
 yet), genuine total-length shortening, and wiring the director's gesture channel to
-`TransitionController`; within sax's real generation, all ~12 of the ported model's
-rule-based bias-layer knobs (left at their defaults — nothing supplies them yet),
-cross-bar hidden-state continuity (each bar re-primes from its own seed window),
-director-signal-driven modulation, and any voice besides sax.
+`TransitionController`; within sax's real generation, all ~11 of the ported model's
+OTHER rule-based bias-layer knobs (contour, energy arc, motif, register contrast,
+etc. — left at their defaults, only `rhythmic_density` is wired), cross-bar
+hidden-state continuity (each bar re-primes from its own seed window), and any voice
+besides sax.
 See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into

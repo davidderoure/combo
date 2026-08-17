@@ -172,15 +172,21 @@ inference (not a mock) runs in tests: `chord_to_wolfson_index` translates combo'
 `sax_generator` builds a seed phrase from a target voice's recent notes (mirroring
 `comping_generator`'s lookback-window pattern) and clips the model's output onto
 the current bar — necessary because, verified empirically, `max_phrase_beats`
-doesn't actually bound the returned phrase's span. Deliberately deferred, same
-scope-cut discipline as every earlier phase: all ~12 of the model's rule-based bias
-knobs (energy arc, motif, register contrast, ...) stay at their defaults; there's no
-hidden-state continuity from one bar's generation to the next; `DirectorSignal` is
-accepted and ignored. This is also the **first piece needing a binary artifact not
-present in a fresh clone** — the trained weights (`ensemble/wolfson/models/
-sax_best.pt`) are gitignored, not committed (see Running, below), so its
-integration tests skip gracefully and its demo section degrades gracefully without
-them, and the test suite is no longer sub-second once torch is imported.
+doesn't actually bound the returned phrase's span. The director's aggregated
+intensity (DESIGN.md §11) now reaches this generation: `rhythmic_density` is the
+one bias parameter the model itself already frames as a general busyness dial
+("0=lyrical/slow, 1=bebop/fast"), so `sax_generator` passes
+`director_signal.intensity` straight through — no translation function needed, and
+grounded in a real probe (0.723 vs. 0.419 beats average note duration at
+`rhythmic_density` 0.0 vs. 1.0) before the test threshold was picked. Deliberately
+deferred, same scope-cut discipline as every earlier phase: all ~11 of the model's
+OTHER rule-based bias knobs (energy arc, motif, register contrast, ...) stay at
+their defaults; there's no hidden-state continuity from one bar's generation to the
+next. This is also the **first piece needing a binary artifact not present in a
+fresh clone** — the trained weights (`ensemble/wolfson/models/sax_best.pt`) are
+gitignored, not committed (see Running, below), so its integration tests skip
+gracefully and its demo section degrades gracefully without them, and the test
+suite is no longer sub-second once torch is imported.
 
 ## Layout
 

@@ -17,17 +17,21 @@ three real integration seams:
      and isn't counted against it) — see ensemble/wolfson/phrase_generator.py's
      generate() docstring.
 
-Explicitly deferred (see DESIGN.md §12 for the full list): all ~12 of
-PhraseGenerator.generate()'s bias-layer knobs (contour, energy arc, motif,
+The director's aggregated intensity (DESIGN.md §11) drives rhythmic_density —
+PhraseGenerator.generate()'s own docstring frames that parameter as "0-1 busyness
+... 0=lyrical/slow, 1=bebop/fast", the one bias knob the model itself already
+treats as a general busyness dial, so no translation function is needed (both
+values are already 0-1 in the same direction, and generate() clamps internally).
+
+Explicitly deferred (see DESIGN.md §12 for the full list): all ~11 of
+PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, motif,
 register contrast, etc.) are left at their defaults — nothing in combo supplies
 them yet, the same "deliberately dumb" spirit as chord_tone_generator itself. No
 hidden-state continuity across bar-to-bar calls (each bar re-primes from that
-bar's own seed). No director-signal modulation of generation (DirectorSignal is
-accepted and ignored — standard "extend on integration"; DirectorSignal.intensity
--> rhythmic_density is a natural follow-on, not built now). `register` is a
-backstop that drops out-of-range notes, not a real voicing control like it is in
-chord_tone_generator/comping_generator — Wolfson's trained pitch vocabulary is
-hard-clipped to MIDI 44-93 by the model itself.
+bar's own seed). `register` is a backstop that drops out-of-range notes, not a
+real voicing control like it is in chord_tone_generator/comping_generator —
+Wolfson's trained pitch vocabulary is hard-clipped to MIDI 44-93 by the model
+itself.
 """
 
 from typing import List, Optional, Tuple
@@ -145,14 +149,18 @@ def sax_generator(
     phrase_gen = PhraseGenerator(instrument="sax", model_path=model_path)
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
-        # director_signal isn't used here yet — see module docstring.
         bar_start = bar_index * BEATS_PER_BAR
         bar_end = bar_start + BEATS_PER_BAR
         since_beat = max(0, bar_index - lookback_bars) * BEATS_PER_BAR
         seed_phrase = _build_seed_phrase(timeline, target_voice_id, since_beat, bar_start)
 
         chord_idx = chord_to_wolfson_index(song.chord_at(bar_start))
-        notes = phrase_gen.generate(seed_phrase, chord_idx=chord_idx, max_phrase_beats=BEATS_PER_BAR)
+        notes = phrase_gen.generate(
+            seed_phrase,
+            chord_idx=chord_idx,
+            max_phrase_beats=BEATS_PER_BAR,
+            rhythmic_density=director_signal.intensity,
+        )
         return _place_phrase_in_bar(notes, bar_start, bar_end, register)
 
     return generate

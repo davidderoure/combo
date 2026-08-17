@@ -243,32 +243,45 @@ def demo_sax_wolfson(chart_path: Path) -> None:
     print(f"synthetic fixture, unlike demo_comping's soloist) — its notes over the")
     print(f"previous {COMPING_LOOKBACK_BARS} bars become the sax's seed_phrase. Bar 0 has an empty")
     print("seed (nothing played yet) -- chord-conditioned generation only, printed")
-    print("below to show that's a real, handled case, not a crash. All ~12 of the")
-    print("model's rule-based bias knobs (energy arc, motif, register contrast, ...)")
-    print("are left at their defaults -- see ensemble/sax.py's module docstring.\n")
+    print("below to show that's a real, handled case, not a crash. All ~11 of the")
+    print("model's OTHER rule-based bias knobs (energy arc, motif, register contrast,")
+    print("...) are left at their defaults -- see ensemble/sax.py's module docstring.\n")
 
-    song = parse_chart(chart_path.read_text())
-    bass = Voice(
-        id="bass",
-        instrument="bass",
-        register=BASS_REGISTER,
-        source="ai",
-        generator=chord_tone_generator(BASS_REGISTER),
-    )
-    sax = Voice(
-        id="sax",
-        instrument="sax",
-        register=SAX_REGISTER,
-        source="ai",
-        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7),
-    )
-    session = Session(song=song, voices=[bass, sax])
-    timeline = session.generate(mode=MACHINE_SPEED)
+    def make_sax_session(director=None) -> Session:
+        song = parse_chart(chart_path.read_text())
+        bass = Voice(
+            id="bass",
+            instrument="bass",
+            register=BASS_REGISTER,
+            source="ai",
+            generator=chord_tone_generator(BASS_REGISTER),
+        )
+        sax = Voice(
+            id="sax",
+            instrument="sax",
+            register=SAX_REGISTER,
+            source="ai",
+            generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7),
+        )
+        directors = [director] if director else []
+        return Session(song=song, voices=[bass, sax], directors=directors)
+
+    timeline = make_sax_session().generate(mode=MACHINE_SPEED)
 
     for event in timeline:
         if event.start_beat >= 3 * BEATS_PER_BAR:  # first three bars are enough to show it working
             break
         print(f"beat {event.start_beat:6.1f}  {event.voice_id:>4}  {note_name(event.pitch):>4}  vel={event.velocity}")
+
+    print("\n  Director intensity now drives rhythmic_density (DESIGN.md §11/§12):")
+    print("  same bass line and sax seed both times, low (0.0) vs high (1.0) intensity —")
+    print("  0=lyrical/slow, 1=bebop/fast, per the model's own framing of that parameter.")
+    for intensity in (0.0, 1.0):
+        director = Director(id="d", source="ai", signal_source=constant_director_source(intensity))
+        tl = make_sax_session(director=director).generate(mode=MACHINE_SPEED)
+        sax_notes = [e for e in tl if e.voice_id == "sax"]
+        avg_duration = sum(e.duration_beats for e in sax_notes) / len(sax_notes)
+        print(f"    intensity={intensity}: {len(sax_notes)} sax notes, avg duration {avg_duration:.3f} beats")
 
 
 def main() -> None:
