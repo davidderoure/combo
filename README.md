@@ -272,9 +272,7 @@ listen and compare.
 Deliberately still deferred, same scope-cut discipline as every earlier phase: all
 ~10 of the model's OTHER rule-based bias knobs (energy arc, contour, register
 contrast, ...) stay at their defaults; hidden-state continuity still resets
-*between* planned chunks; the "chess" search-and-evaluate idea (§13) is the
-obvious next consumer for a phrase critic but remains separate, not attempted
-here.
+*between* planned chunks.
 
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
@@ -290,6 +288,38 @@ student's fast, exploratory playing that shouldn't be marked down for being
 unsustained, without touching the other four metrics. `musicality_score` itself
 just grew an optional `weights` parameter to make this possible (every sub-score
 is still computed and reported regardless of what counts toward `overall`).
+
+**Sax can now search, not just generate once** (Phase 14, DESIGN.md §13's
+long-deferred "chess" idea — "generate a few bars, evaluate, branch/backtrack").
+`sax_generator`'s new `n_candidates` parameter generates that many candidates
+per chunk (identical arguments each call — the model's own RNG state naturally
+diversifies successive calls, no extra diversity logic needed) and keeps the
+highest-scoring one by `musicality_score(...).overall` — the evaluator §13
+always said this idea needed, now that Phase 12 built one. §13's "poor fit for
+live performance" reasoning was never actually checked against real numbers;
+done directly once there was something to measure: even 20 candidates over a
+full 4-bar chunk cost ~164ms against a 7.3-second real-time budget at blues
+tempo (132bpm) — corrected, not inherited unquestioned, though honestly still
+unverified for true live call-and-response specifically (that measures
+computation against `Session`'s pacing budget, not human-perceived
+conversational latency, a different question). At `n_candidates=1` (the
+default) this is exactly the old behaviour: one `generate()` call, one score —
+checked directly, byte-identical output either way. A real simplification fell
+out of building this: `musicality_score` used to be computed only
+`if memory is not None:`; now it's always computed once (selection needs it
+regardless of whether memory is configured), and `memory.store()` reuses that
+same computation rather than re-deriving it. Verified with a real,
+independently-recomputed proof, not sax_generator's own bookkeeping taken on
+faith: a local spy captured every candidate's actual notes, recomputed each
+one's score from scratch, and confirmed both that the recomputed scores match
+`generate.last_candidate_scores` exactly and that the dispensed notes came from
+the genuinely highest-scoring candidate. Deliberately not attempted: varying
+anything besides the random draw across candidates (temperature,
+`rhythmic_density` — searching generation *parameters*, a larger idea than
+resampling fixed ones); revision after committing (ImproteK's actual
+architecture, §12); a director-gesture-driven `n_candidates` toggle (the
+natural next use of Phase 13's `critic_weights`-mutation pattern, not built).
+
 This is also the **first piece needing a binary artifact
 not present in a fresh clone** — the trained weights
 (`ensemble/wolfson/models/sax_best.pt`) are gitignored, not committed (see Running,

@@ -113,7 +113,17 @@ or teacher turn it off live for a student playing fast, exploratory lines that
 shouldn't be marked down for being unsustained. `Voice` and `Director` remain
 deliberately distinct types (different `Session` contracts — merged timeline
 content vs. an aggregated-away signal); only the input-recognition layer
-unified. All with passing tests.
+unified. Sax can now search, not just generate once (Phase 14, DESIGN.md §13's
+long-deferred "chess" idea) — `n_candidates` generates several candidates per
+chunk and keeps the highest-scoring one by `musicality_score`, the evaluator §13
+always said this needed. §13's own "poor fit for live performance" reasoning was
+never actually checked against real numbers; done directly once there was
+something to measure: even 20 candidates over a 4-bar chunk cost ~164ms against
+a 7.3-second real-time budget at blues tempo, correcting that assumption rather
+than inheriting it — while being honest that this measures computation against
+`Session`'s pacing budget, not human-perceived latency in true live
+call-and-response, which is a different question this phase doesn't answer. All
+with passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
 skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
@@ -144,10 +154,9 @@ which can span several bars, chord-hold permitting — a real extension from Pha
 8/9, not a full solve), and any voice besides sax; within the critic, real tuning
 of every weight/threshold it uses (`DEFAULT_WEIGHTS`, the contour-smoothness and
 near-repeat placeholders — all explicitly unvalidated, same status as every other
-hand-picked constant in this codebase) and any consumer besides `RehearsalMemory`'s
-weighting and sax's own toggle — the "chess" search/evaluate-alternatives idea
-(§13) is the obvious next consumer for a phrase critic but remains a separate,
-explicitly deferred direction, not attempted by this phase.
+hand-picked constant in this codebase); within search-and-evaluate (§13, Phase
+14), varying anything besides the random draw across candidates, revision after
+committing, and a director-gesture-driven `n_candidates` toggle.
 See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into
@@ -657,11 +666,24 @@ either substrate, if any, is still a sketching-phase question.
 
 ## 13. Explicitly out of scope (for now)
 
-- **Lookahead/search generation** ("chess-move" idea: generate a few bars, evaluate,
-  branch/backtrack). Shares the same core dependency as batch curation (an evaluator),
-  just far more often and expensively. Natural fit for batch/offline mode later; a
-  poor fit for live/interactive performance, which can't pause to search before
-  committing to the next notes.
+- ~~**Lookahead/search generation**~~ **Built, Phase 14**: `sax_generator`'s
+  `n_candidates` parameter generates several candidates per chunk (identical
+  arguments — the model's own RNG diversifies successive calls) and keeps the
+  highest-scoring one by `ensemble/critic.py`'s `musicality_score`, the evaluator
+  this item always said it needed. The "poor fit for live performance" reasoning
+  below was never actually checked against real numbers — done directly once
+  there was something to measure: even 20 candidates over a full 4-bar chunk
+  costs ~164ms against a 7.3-second real-time budget at blues tempo, so this
+  isn't restricted to `machine_speed` after all. What's still genuinely
+  unverified: that's computation time against `Session`'s nominal per-bar
+  pacing budget, not human-*perceived* latency in true live call-and-response —
+  a different, more subtle question this phase doesn't answer. Also not
+  attempted: varying anything besides the random draw across candidates
+  (temperature, `rhythmic_density` — searching generation *parameters*, a
+  larger idea than resampling fixed ones); revision after committing (ImproteK's
+  actual architecture, §12); a director-gesture-driven `n_candidates` toggle
+  (the natural next use of Phase 13's `critic_weights`-mutation pattern, not
+  built).
 - **Polyphonic/keyboard chord input**, for the performer role specifically (§6) — the
   director's use of a MIDI keyboard is a different, much simpler problem and is in
   scope.

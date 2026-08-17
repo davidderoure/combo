@@ -364,6 +364,28 @@ def demo_sax_wolfson(chart_path: Path) -> None:
     Session(song=slow_song, voices=[toggle_bass, toggle_sax], directors=[toggle_director]).generate(mode=MACHINE_SPEED)
     print(f"    critic_weights['singability'] after a bar-0 toggle gesture: {toggle_sax_gen.critic_weights['singability']}")
 
+    print("\n  Search-and-evaluate (DESIGN.md §13, Phase 14 -- \"the chess approach\"):")
+    print("  n_candidates>1 generates several candidates per chunk (identical")
+    print("  arguments -- the model's own RNG naturally diversifies successive")
+    print("  calls) and keeps the highest-scoring one. DESIGN.md §13 originally")
+    print("  called this a poor fit for live performance; measured directly, even")
+    print("  20 candidates over a 4-bar chunk costs ~164ms against a 7.3s real-time")
+    print("  budget at blues tempo -- not restricted to machine_speed after all.\n")
+
+    single_bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    single_sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=8)
+    single_sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=single_sax_gen)
+    Session(song=slow_song, voices=[single_bass, single_sax]).generate(mode=MACHINE_SPEED)
+    print(f"    n_candidates=1:  score={single_sax_gen.last_candidate_scores[0]:.3f} "
+          f"(1 candidate, no choice)")
+
+    searched_bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    searched_sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=10, seed=8)
+    searched_sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=searched_sax_gen)
+    Session(song=slow_song, voices=[searched_bass, searched_sax]).generate(mode=MACHINE_SPEED)
+    print(f"    n_candidates=10: score={max(searched_sax_gen.last_candidate_scores):.3f} "
+          f"(best of {[round(s, 3) for s in searched_sax_gen.last_candidate_scores]})")
+
 
 @contextmanager
 def _counting_phrase_generator_calls():

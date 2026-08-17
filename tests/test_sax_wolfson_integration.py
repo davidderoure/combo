@@ -153,11 +153,11 @@ def build_slow_song() -> Song:
     )
 
 
-def make_slow_session(memory=None, seed: int = 7) -> Session:
+def make_slow_session(memory=None, seed: int = 7, n_candidates: int = 1) -> Session:
     bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
     sax = Voice(
         id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
-        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", memory=memory, seed=seed),
+        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", memory=memory, seed=seed, n_candidates=n_candidates),
     )
     return Session(song=build_slow_song(), voices=[bass, sax])
 
@@ -254,6 +254,94 @@ def test_director_gesture_toggles_singability_weight():
     sax2 = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
     Session(song=load_blues(), voices=[bass2, sax2], directors=[director2]).generate()
     assert sax_gen.critic_weights["singability"] != 0.0
+
+
+def test_search_makes_n_candidates_generate_calls_per_chunk():
+    """Phase 14: n_candidates=5 should produce 5 PhraseGenerator.generate() calls
+    for EACH of build_slow_song()'s 2 chunks (10 total), not 5 per bar dispensed
+    from a chunk — same cadence as before, just more calls per chunk-build."""
+    with spying_on_phrase_generator_calls() as calls:
+        make_slow_session(n_candidates=5).generate()
+    assert len(calls) == 10  # 2 chunks * 5 candidates
+
+
+def test_search_picks_the_actual_highest_scoring_candidate():
+    """Deterministic, not a re-derivation of the musical effect: a local spy
+    captures every candidate's actual notes AND chord_idx/seed_phrase, then
+    independently recomputes musicality_score for each and confirms both (a)
+    generate.last_candidate_scores matches those recomputed scores exactly, and
+    (b) the notes sax_generator actually dispensed correspond to the
+    highest-scoring one -- verifying via the same computation, not trusting
+    sax_generator's own bookkeeping blindly (the Phase 8 postmortem's lesson)."""
+    from ensemble.critic import musicality_score
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []  # (kwargs, returned_notes) per call
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=5, seed=3)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    # generate.last_candidate_scores is OVERWRITTEN (not accumulated) on every
+    # chunk-build, so after the full run it reflects only the LAST of
+    # build_slow_song()'s 2 chunks (bars 4-7, DEFAULT_PLAN_BARS=4) -- comparing
+    # against candidates[:5] (the first chunk) would silently compare the wrong
+    # chunk's data. Use the last 5 calls to match what's actually still exposed.
+    last_chunk = candidates[-5:]
+    recomputed_scores = [
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
+    assert recomputed_scores == sax_gen.last_candidate_scores
+
+    winner_notes = last_chunk[recomputed_scores.index(max(recomputed_scores))][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+    second_chunk_start = 4 * BEATS_PER_BAR  # DEFAULT_PLAN_BARS=4 -> chunk 2 starts at bar 4
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
+    )
+    # Dispensed pitches are a subset of the winning candidate's (clipping/register
+    # backstop can drop some, per _split_phrase_into_bars) -- never pitches from
+    # a losing candidate.
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
+def test_search_with_one_candidate_matches_unset_behaviour():
+    """n_candidates=1 (explicit) must reproduce n_candidates-unset behaviour
+    exactly -- the concrete backward-compatibility check, same seed both ways."""
+    explicit = make_slow_session(seed=9, n_candidates=1).generate()
+    default = make_slow_session(seed=9).generate()
+    assert explicit.events == default.events
+
+
+def test_search_never_does_worse_than_a_single_draw():
+    """A real quality comparison, reported honestly either way: search's best
+    score for the *same final chunk* should never be WORSE than a single draw's,
+    since search always keeps the max among what a single draw would have
+    produced anyway. Scoped to build_slow_song()'s last chunk specifically --
+    last_candidate_scores reflects only the most recently built chunk (it's
+    overwritten, not accumulated, each time a new one is built), not an average
+    across the whole run, said plainly rather than overclaimed."""
+    single = make_slow_session(seed=11, n_candidates=1)
+    single.generate()
+    single_score = single.voices[1].generator.last_candidate_scores[0]
+
+    searched = make_slow_session(seed=11, n_candidates=8)
+    searched.generate()
+    searched_best = max(searched.voices[1].generator.last_candidate_scores)
+
+    assert searched_best >= single_score
 
 
 def test_voice_order_does_not_affect_output():

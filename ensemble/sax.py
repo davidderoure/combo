@@ -74,6 +74,33 @@ unsustained. Exposed as generate.critic_weights (a plain attribute on the
 returned closure) so tests can assert the toggle happened directly, rather than
 re-deriving the effect statistically.
 
+Search-and-evaluate (Phase 14, DESIGN.md §13 — "the chess approach"): sax_generator
+optionally generates `n_candidates` candidates per chunk (identical arguments each
+time — the model's own RNG state naturally diversifies successive calls, no extra
+diversity logic needed) and keeps the highest-scoring one by
+`musicality_score(...).overall`. DESIGN.md §13 originally called this "a poor fit
+for live performance, which can't pause to search before committing" — checked
+directly, not assumed, once there was something to measure: even 20 candidates
+over a full 4-bar chunk costs ~164ms against a 7.3-second real-time budget at
+blues tempo. Not restricted to machine_speed, but honestly still unverified for
+true live call-and-response specifically — the measurement is against `Session`'s
+nominal per-bar pacing budget, not human-perceived conversational latency, which
+is a different, more subtle question this phase doesn't answer. A side effect
+worth noting: `musicality_score` is now always computed once a chunk is built
+(previously only `if memory is not None:`), since selection needs it regardless
+of whether memory is configured — `memory.store()` reuses that same computation
+rather than re-deriving it. At `n_candidates=1` (the default) this is exactly
+today's behaviour: one `generate()` call, one score. Exposed for testing as
+`generate.last_candidate_scores` (every candidate's `.overall` from the most
+recent chunk-build, in generation order) — same convention as
+`generate.critic_weights`. Deliberately NOT attempted: varying anything besides
+the random draw across candidates (temperature, rhythmic_density — a genuinely
+different, larger idea, searching generation *parameters* rather than
+re-sampling fixed ones); revision after committing (ImproteK's actual
+architecture, DESIGN.md §12); a director-gesture-driven `n_candidates` toggle
+(the natural next use of Phase 13's exact critic_weights-mutation pattern, not
+built here).
+
 Explicitly deferred (see DESIGN.md §12 for the full list): all ~10 of
 PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, register
 contrast, etc. — motif_targets/motif_strength are now wired, via memory) are left
@@ -203,6 +230,7 @@ def sax_generator(
     lookback_bars: int = 2,
     plan_bars: int = DEFAULT_PLAN_BARS,
     memory: Optional[RehearsalMemory] = None,
+    n_candidates: int = 1,
     model_path: Optional[str] = None,
     seed: Optional[int] = None,
 ) -> Generator:
@@ -217,6 +245,12 @@ def sax_generator(
     so passing the *same* RehearsalMemory into a later Session/sax_generator call
     lets that later run draw on this one's material (DESIGN.md §12, Phase 11).
     Passing no memory (the default) is exactly Phase 10's behaviour, unchanged.
+
+    n_candidates, if greater than 1, generates that many candidates per chunk
+    (identical arguments each call) and keeps the one scoring highest by
+    musicality_score(...).overall — DESIGN.md §13's "chess" search-and-evaluate
+    idea, Phase 14. Defaults to 1: exactly one generate() call per chunk, exactly
+    today's behaviour, unchanged.
 
     The PhraseGenerator (and its ~3.5MB model weights) is constructed once here,
     not per bar or per plan — reused across the whole session for efficiency.
@@ -269,20 +303,31 @@ def sax_generator(
                 if common:
                     motif_targets = [common[0][0]]
 
-            notes = phrase_gen.generate(
-                seed_phrase,
-                chord_idx=chord_idx,
-                max_phrase_beats=span_bars * BEATS_PER_BAR,
-                rhythmic_density=director_signal.intensity,
-                motif_targets=motif_targets,
-                motif_strength=DEFAULT_MOTIF_STRENGTH if motif_targets else 0.0,
-            )
+            best_notes = None
+            best_score = None
+            candidate_scores = []
+            for _ in range(n_candidates):
+                candidate_notes = phrase_gen.generate(
+                    seed_phrase,
+                    chord_idx=chord_idx,
+                    max_phrase_beats=span_bars * BEATS_PER_BAR,
+                    rhythmic_density=director_signal.intensity,
+                    motif_targets=motif_targets,
+                    motif_strength=DEFAULT_MOTIF_STRENGTH if motif_targets else 0.0,
+                )
+                candidate_score = musicality_score(candidate_notes, chord_idx, seed_phrase, weights=critic_weights)
+                candidate_scores.append(candidate_score.overall)
+                if best_score is None or candidate_score.overall > best_score.overall:
+                    best_notes, best_score = candidate_notes, candidate_score
+            notes = best_notes
+            generate.last_candidate_scores = candidate_scores
+
             if memory is not None:
-                score = musicality_score(notes, chord_idx, seed_phrase, weights=critic_weights).overall
-                memory.store(notes, score=score)
+                memory.store(notes, score=best_score.overall)
             plan.extend(_split_phrase_into_bars(notes, bar_start, span_bars, register))
 
         return plan.popleft()
 
     generate.critic_weights = critic_weights  # exposed for testing -- see module docstring
+    generate.last_candidate_scores = []  # populated on the first chunk-build; exposed for testing
     return generate
