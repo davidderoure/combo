@@ -73,14 +73,25 @@ by that practice. Real prior art was found and partly reused: wolfson's
 (`extract_interval_motifs`, ported near-verbatim into `ensemble/wolfson/motifs.py`;
 `PhraseMemory`'s store/recall pattern re-authored, not ported, since its reset
 policy — between `ArcController`'s arc loops within one performance — doesn't fit
-persisting *across* performances). No evaluation of what's worth remembering is
-attempted — `recall_motifs()` just leans toward whatever motif recurred most,
-stated as a deliberate simplification, not a gap (see `ensemble/memory.py`'s
-docstring for what real evaluation would need). Wiring was verified with a spy on
+persisting *across* performances). Wiring was verified with a spy on
 `PhraseGenerator.generate`'s actual call arguments, not the musical output —
 a real empirical probe found the model only follows a fed-in motif rarely (2/40
 trials), which is why the test asserts the *plumbing* deterministically rather
-than the stochastic musical effect. All with passing tests.
+than the stochastic musical effect. What's remembered is now quality-weighted, not
+pure frequency (`ensemble/critic.py`, a musicality critic) — closing the gap
+`ensemble/memory.py`'s own docstring named. Grounded in two real sources, not
+first-principles guessing: David's unrelated prior work measuring "musicality" for
+LSTM-generated piano sight-reading pieces (a Colab notebook analysing real Grade 1
+specimens via corpus-similarity — interval histograms and melodic contour reduced
+to a string of U/D/S compared by edit distance; a striking, unplanned overlap with
+`gesture/recognizer.py`'s own sub-gesture alphabet, which already contains that
+exact U/D/S vocabulary for an unrelated purpose), and Wolfson's own ported bias
+layers, three of which are repurposed from generation-time sampling biases into
+retrospective scoring functions (singability's bell curve, voice-leading's
+chord-tone resolution). All five metrics (`tonal_conformity`, `contour_smoothness`,
+`repetition`, `call_response_relatedness`, `singability`) are pure, deterministic
+functions needing no model inference — the first sax-adjacent test file since
+Phase 8 that's fully testable without `sax_best.pt`. All with passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
 skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
@@ -99,12 +110,13 @@ OTHER rule-based bias-layer knobs (contour, energy arc, register contrast, etc. 
 left at their defaults; `rhythmic_density` and, via memory, `motif_targets`/
 `motif_strength` are wired), hidden-state continuity *between* planned chunks (it
 now exists *within* one chunk, which can span several bars, chord-hold permitting
-— a real extension from Phases 8/9, not a full solve), any voice besides sax, and
-any evaluation of what's worth remembering in `RehearsalMemory` (an actual critic
-judging quality, not just recency/frequency — the natural home for it is the
-still-unbuilt batch-mode scoring above); the "chess" search/evaluate-alternatives
-idea remains a separate, explicitly deferred direction from rehearsal memory, not
-attempted by it.
+— a real extension from Phases 8/9, not a full solve), and any voice besides sax;
+within the critic, real tuning of every weight/threshold it uses (`DEFAULT_WEIGHTS`,
+the contour-smoothness and near-repeat placeholders — all explicitly unvalidated,
+same status as every other hand-picked constant in this codebase) and any
+consumer besides `RehearsalMemory` — the "chess" search/evaluate-alternatives idea
+(§13) is the obvious next consumer for a phrase critic but remains a separate,
+explicitly deferred direction, not attempted by this phase.
 See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into

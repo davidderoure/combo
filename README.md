@@ -214,22 +214,53 @@ reads and writes `memory` at exactly the point a new plan chunk is built, which
 gives two kinds of persistence from one mechanism: within-run (a later chunk can
 draw on an earlier one, same `Session.generate()` call) and cross-run (a *new*
 `Session.generate()` call can draw on a *previous* one's material, if the same
-`RehearsalMemory` is passed to both — the rehearsal-informs-the-gig case). No
-evaluation of what's worth remembering is attempted: `recall_motifs().most_common(1)`
-just leans toward whatever interval pattern recurred most, a deliberate
-simplification (see the module docstring), not a gap — an actual critic is real,
-separate work, the natural extension of §11's still-deferred batch-mode scoring.
-Tested by spying on `PhraseGenerator.generate`'s actual call arguments (does
-`memory`'s content reach `motif_targets`/`motif_strength`?) rather than the musical
-output — a real empirical probe found the model only follows a fed-in motif rarely
-(2/40 trials over real inference), so a statistical pass/fail test on the musical
-effect would have been unreliable; the demo section shows the qualitative effect
-and says so plainly rather than implying a guaranteed audible callback.
+`RehearsalMemory` is passed to both — the rehearsal-informs-the-gig case). Tested
+by spying on `PhraseGenerator.generate`'s actual call arguments (does `memory`'s
+content reach `motif_targets`/`motif_strength`?) rather than the musical output —
+a real empirical probe found the model only follows a fed-in motif rarely (2/40
+trials over real inference), so a statistical pass/fail test on the musical effect
+would have been unreliable; the demo section shows the qualitative effect and says
+so plainly rather than implying a guaranteed audible callback.
+
+Recall is **quality-weighted now, not pure frequency** (Phase 12,
+`ensemble/critic.py`) — closing the gap `ensemble/memory.py`'s own docstring
+named ("no evaluation of what's worth remembering... an actual critic... real,
+separate work"). Grounded in two real sources, not first-principles guessing:
+David's unrelated prior work measuring "musicality" for LSTM-generated piano
+sight-reading pieces (a Colab notebook analysing real Grade 1 specimens via
+**corpus-similarity**, not a hand-authored score — interval histograms, and
+melodic contour reduced to a string of **U/D/S** compared by edit distance; a
+striking, unplanned overlap with `gesture/recognizer.py`'s own sub-gesture
+alphabet, which already contains that exact U/D/S vocabulary for an unrelated
+purpose), and Wolfson's own ported bias layers, three of which are repurposed
+from *generation-time sampling biases* into *retrospective scoring functions*
+instead of new theory (singability's bell curve; voice-leading's chord-tone
+resolution, via `chord_tones`/`chord_to_mode`/`scale_pitch_classes`,
+`ensemble/wolfson/scales.py`). The corpus-similarity *method* doesn't transfer
+directly — combo has no "truth set" of real jazz phrases to compare against, and
+Grade 1 piano's interval norms are the wrong reference for jazz — but the
+*technique* does: interval sequences, and U/D/S contour-string edit distance (a
+small in-house Levenshtein function, not a new dependency for one ~15-line
+algorithm). Five metrics: `tonal_conformity`, `contour_smoothness`, `repetition`
+(exact n-gram repeats, Phase 11's `extract_interval_motifs`, plus *near*-repeats
+via contour edit distance — new here, catches a varied restatement exact matching
+misses), `call_response_relatedness` (contour similarity between the seed and the
+response — genuinely new, prompted directly by the notebook; documented honestly
+as measuring *relatedness* not *goodness*, since real call-and-response sometimes
+deliberately contrasts rather than mirrors), and `singability`. Every one is a
+**pure, deterministic function needing no model inference** — the first
+sax-adjacent test file since Phase 8 that's fully testable without `sax_best.pt`.
+All weights and thresholds (`DEFAULT_WEIGHTS`, the smoothness/near-repeat
+placeholders) are explicit, unvalidated placeholders, same status as every other
+hand-picked constant in this codebase — needing real tuning once there's a way to
+listen and compare.
 
 Deliberately still deferred, same scope-cut discipline as every earlier phase: all
 ~10 of the model's OTHER rule-based bias knobs (energy arc, contour, register
 contrast, ...) stay at their defaults; hidden-state continuity still resets
-*between* planned chunks. This is also the **first piece needing a binary artifact
+*between* planned chunks; the "chess" search-and-evaluate idea (§13) is the
+obvious next consumer for a phrase critic but remains separate, not attempted
+here. This is also the **first piece needing a binary artifact
 not present in a fresh clone** — the trained weights
 (`ensemble/wolfson/models/sax_best.pt`) are gitignored, not committed (see Running,
 below), so its integration tests skip
@@ -267,7 +298,10 @@ suite is no longer sub-second once torch is imported.
   `chord_to_wolfson_index`, `sax_generator`, `_bars_until_chord_change` +
   `_split_phrase_into_bars` for the multi-bar planning buffer), `memory.py`
   (DESIGN.md §12 — `RehearsalMemory`, the first state that persists across separate
-  `Session.generate()` calls).
+  `Session.generate()` calls), `critic.py` (DESIGN.md §11/§12 — a musicality
+  critic: `tonal_conformity`, `contour_smoothness`, `repetition`,
+  `call_response_relatedness`, `singability`, `musicality_score`; every function
+  pure and deterministic, no model inference).
 - `ensemble/wolfson/` — ported generative core from wolfson (DESIGN.md §12):
   `lstm_model.py` (`PhraseModel`), `phrase_generator.py` (`PhraseGenerator`),
   `encoding.py`, `chords.py`, `scales.py`, `motifs.py` (`extract_interval_motifs`,
@@ -277,8 +311,8 @@ suite is no longer sub-second once torch is imported.
 - `tests/test_recognizer.py`, `tests/test_gesture_vocabulary.py`, `tests/test_song.py`,
   `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
   `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py`,
-  `tests/test_transitions.py`, `tests/test_sax.py`, `tests/test_memory.py` — no MIDI
-  hardware needed
+  `tests/test_transitions.py`, `tests/test_sax.py`, `tests/test_memory.py`,
+  `tests/test_critic.py` — no MIDI hardware needed
 - `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
   skips cleanly if they're not present (see Running, below)
 - `listen.py` — small runnable script: starts every source in `config.MIDI_SOURCES`,

@@ -316,10 +316,10 @@ def demo_sax_wolfson(chart_path: Path) -> None:
 
     print("\n  Rehearsal memory (DESIGN.md §12, Phase 11): one RehearsalMemory shared")
     print("  across two SEPARATE Session.generate() calls -- \"rehearsal\", then \"gig\",")
-    print("  the first thing in combo that persists across performances. No quality")
-    print("  judgement is attempted (see ensemble/memory.py's docstring) -- whatever")
-    print("  motif recurred most in the rehearsal is what the gig leans toward, and")
-    print("  a real empirical probe (see the Phase 11 plan) found the model actually")
+    print("  the first thing in combo that persists across performances. Since Phase 12")
+    print("  recall is quality-weighted, not pure frequency (ensemble/critic.py) -- a")
+    print("  higher-scoring phrase's motifs count for more than a merely-frequent one's.")
+    print("  A real empirical probe (see the Phase 11 plan) found the model actually")
     print("  follows a fed-in motif only rarely (2/40 trials) -- said honestly here")
     print("  rather than implied to be a reliable audible callback:\n")
 
@@ -330,7 +330,10 @@ def demo_sax_wolfson(chart_path: Path) -> None:
         generator=sax_generator(SAX_REGISTER, target_voice_id="bass", memory=memory, seed=3),
     )
     Session(song=slow_song, voices=[rehearsal_bass, rehearsal_sax]).generate(mode=MACHINE_SPEED)
-    print(f"    after rehearsal: recall_motifs() top pattern = {memory.recall_motifs().most_common(1)}")
+    print("    after rehearsal, each stored chunk's musicality score:")
+    for i, entry in enumerate(memory._phrases):
+        print(f"      chunk {i}: score={entry['score']:.3f}")
+    print(f"    recall_motifs() top pattern (quality-weighted) = {memory.recall_motifs().most_common(1)}")
 
     gig_bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
     gig_sax = Voice(

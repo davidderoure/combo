@@ -51,10 +51,13 @@ kinds of persistence from one piece of code: within-run (chunk 2 can draw on wha
 chunk 1 just played, same Session.generate() call) and cross-run (chunk 1 of a
 *new* Session.generate() call can draw on the last chunk of a *previous* one, if
 the same RehearsalMemory object is passed to both — the rehearsal-informs-the-gig
-idea this was built for). No evaluation of what's worth remembering is attempted —
-recall_motifs() just picks whatever interval pattern recurred most; see
-ensemble/memory.py's docstring for why that's a deliberate simplification, not a
-gap, and what real evaluation would need instead.
+idea this was built for). Since Phase 12 (ensemble/critic.py), what's remembered
+is quality-weighted, not pure frequency: each chunk's musicality_score is computed
+right here (chord_idx and seed_phrase are already local at this exact point, no
+new data plumbing) and passed to memory.store() alongside the notes, so
+recall_motifs() favours motifs from higher-scoring phrases — see
+ensemble/critic.py's module docstring for how "quality" is measured and how
+honestly-placeholder that is.
 
 Explicitly deferred (see DESIGN.md §12 for the full list): all ~10 of
 PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, register
@@ -73,6 +76,7 @@ from typing import List, Optional, Tuple
 
 from song.chord import Chord
 
+from .critic import musicality_score
 from .memory import RehearsalMemory
 from .timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from .voice import Generator
@@ -255,7 +259,8 @@ def sax_generator(
                 motif_strength=DEFAULT_MOTIF_STRENGTH if motif_targets else 0.0,
             )
             if memory is not None:
-                memory.store(notes)
+                score = musicality_score(notes, chord_idx, seed_phrase).overall
+                memory.store(notes, score=score)
             plan.extend(_split_phrase_into_bars(notes, bar_start, span_bars, register))
 
         return plan.popleft()

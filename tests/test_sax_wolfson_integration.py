@@ -207,6 +207,23 @@ def test_memory_preloads_a_fresh_session_from_a_previous_one():
     assert calls[0]["motif_targets"] != []
 
 
+def test_memory_stores_a_real_computed_musicality_score():
+    """Phase 12: a real end-to-end check that sax_generator actually computes
+    and passes a musicality score into memory.store(), not the RehearsalMemory
+    default. RehearsalMemory has no public accessor for stored scores (nothing
+    else has needed one) -- inspecting _phrases directly is the simplest way
+    to check this, same as reaching into "private" state elsewhere in this
+    codebase's tests when there's no dedicated API for it yet."""
+    mem = RehearsalMemory()
+    make_slow_session(memory=mem, seed=1).generate()
+    assert len(mem._phrases) == 2  # build_slow_song() always produces exactly 2 chunks
+    for entry in mem._phrases:
+        assert 0.0 <= entry["score"] <= 1.0
+    # Not every chunk's score should coincidentally land on the bare default (1.0)
+    # used when no score is passed at all -- proof a real computation happened.
+    assert any(entry["score"] != 1.0 for entry in mem._phrases)
+
+
 def test_voice_order_does_not_affect_output():
     """Same content regardless of voice order — not the same tie-break order.
     bass and sax both start bar 0 at beat 0.0 (a genuine, expected tie: bass's

@@ -17,15 +17,17 @@ rehearsals of the same piece." The source-filtering/recall_random/recall_early
 machinery PhraseMemory has for its bass-vs-sax call-response setup isn't needed for
 this MVP's single-voice case either.
 
-What "worth remembering" means in this MVP, stated as a deliberate simplification,
-not a gap: no evaluation of quality. recall_motifs()'s most_common(1) just picks
-whichever interval pattern has recurred most often across recently stored phrases
-— on a single freshly-generated chunk that's usually just "whatever short shape
-happened to repeat," not "the good bit." An actual critic that judges what's worth
-carrying forward is real, separate work (DESIGN.md §11's still-deferred batch-mode
-scoring is the natural home for it) — this phase ships the plumbing (does persisted
-material reach and influence generation?) before the judgment (is it good?), same
-order every earlier phase built in.
+What "worth remembering" means: as of Phase 12, quality-weighted, not pure
+recency/frequency. store() takes an optional score (ensemble/critic.py's
+MusicalityScore.overall — a real, if placeholder-tuned, critic, not a manual
+constant); recall_motifs() weights each stored phrase's contribution by that
+score instead of counting every phrase equally, so a high-scoring phrase's motifs
+dominate recall over a low-scoring phrase's, even at equal repeat counts.
+score defaults to 1.0 — calling store() without one (as every caller before
+Phase 12 did) reproduces the exact old unweighted-count behaviour, no shim
+needed. DESIGN.md §11's still-deferred batch-mode scoring remains a distinct,
+larger idea (accumulating one signal across a whole song for curation) — this is
+narrower: per-phrase quality weighting the moment a phrase is stored.
 """
 
 from collections import Counter
@@ -40,22 +42,27 @@ DEFAULT_MAX_PHRASES = 16
 class RehearsalMemory:
     def __init__(self, max_phrases: int = DEFAULT_MAX_PHRASES):
         self._max_phrases = max_phrases
-        self._phrases: List[list] = []  # each entry: extracted motifs for one stored phrase
+        self._phrases: List[dict] = []  # each entry: {"motifs": [...], "score": float}
 
-    def store(self, notes: list) -> None:
+    def store(self, notes: list, score: float = 1.0) -> None:
         """notes: PhraseGenerator.generate()'s raw output. REST_PITCH sentinels are
         filtered before extraction — extract_interval_motifs is a plain pitch-
         sequence function, it doesn't know about wolfson's rest-sentinel
-        convention."""
+        convention. score: typically ensemble/critic.py's MusicalityScore.overall
+        for this same phrase (see module docstring) — defaults to 1.0, matching
+        every stored phrase counting equally, the pre-Phase-12 behaviour."""
         real_notes = [n for n in notes if n.get("pitch") != REST_PITCH]
-        self._phrases.append(extract_interval_motifs(real_notes))
+        self._phrases.append({"motifs": extract_interval_motifs(real_notes), "score": score})
         if len(self._phrases) > self._max_phrases:
             self._phrases.pop(0)
 
     def recall_motifs(self, n_recent: int = DEFAULT_MAX_PHRASES) -> Counter:
         """Counter of interval-motif tuples seen across the last n_recent stored
-        phrases — most_common() gives a caller something to lean toward next."""
+        phrases, weighted by each phrase's score — most_common() gives a caller
+        something to lean toward next, favouring motifs from higher-scoring
+        phrases over merely-frequent ones."""
         counter: Counter = Counter()
-        for motifs in self._phrases[-n_recent:]:
-            counter.update(motifs)
+        for entry in self._phrases[-n_recent:]:
+            for motif in entry["motifs"]:
+                counter[motif] += entry["score"]
         return counter
