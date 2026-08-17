@@ -37,6 +37,15 @@ def test_trill_fires_reset_tempo():
     assert [g.name for g in fired] == ["reset_tempo"]
 
 
+def test_two_same_runs_fire_toggle_singability():
+    vocab, fired = make_vocab()
+    feed(vocab, ["S", "S"])
+    # Exactly one fire, on the second S -- no 1-length "S" rule exists to fire
+    # prematurely on the first (see DEFAULT_RULES' own comment on why "T","T"
+    # couldn't have been used here instead).
+    assert [g.name for g in fired] == ["toggle_singability"]
+
+
 def test_unrelated_labels_fire_nothing():
     vocab, fired = make_vocab()
     feed(vocab, ["U", "D", "S", "R"])
@@ -47,18 +56,24 @@ def test_record_and_alias_teaches_a_new_pattern():
     vocab, fired = make_vocab()
     rule_count_before = len(vocab.rules)
 
-    # begin-record (U,U), teach content "S,S,L" (its tail "L" matches the existing
-    # L -> handover rule), end-record (D,D) — should alias the full taught pattern
-    feed(vocab, ["U", "U", "S", "S", "L", "D", "D"])
+    # begin-record (U,U), teach content "D,S,L" (its tail "L" matches the existing
+    # L -> handover rule), end-record (D,D) — should alias the full taught pattern.
+    # Deliberately not "S,S,..." for the filler content: "S","S" is itself now a
+    # seed rule (toggle_singability, DEFAULT_RULES) — using it here would make the
+    # REPLAY below fire that 2-length rule as a prefix match before ever reaching
+    # the taught 3-length pattern, since rules are checked in list order and a
+    # shorter match always wins first (same reasoning DEFAULT_RULES' own comment
+    # gives for why toggle_singability couldn't be built on "T","T" either).
+    feed(vocab, ["U", "U", "D", "S", "L", "D", "D"])
     assert fired == []  # recording suppresses ordinary rule-firing while it's active
     assert vocab.pending == []
     assert len(vocab.rules) == rule_count_before + 1
-    assert vocab.rules[-1].pattern == ("S", "S", "L")
+    assert vocab.rules[-1].pattern == ("D", "S", "L")
     assert vocab.rules[-1].gesture.name == "handover"
 
     # replaying the exact taught sequence should now fire the aliased gesture
     fired.clear()
-    feed(vocab, ["S", "S", "L"])
+    feed(vocab, ["D", "S", "L"])
     assert [g.name for g in fired] == ["handover"]
 
 

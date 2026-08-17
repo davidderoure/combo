@@ -45,10 +45,23 @@ class GestureRule:
     gesture: Gesture
 
 
-# Placeholder seed vocabulary (§10.1) — a single long held note, a single trill.
+# Placeholder seed vocabulary (§10.1) — a single long held note, a single trill,
+# and (Phase 13, DESIGN.md §11) two separate same-note-repeat runs in a row for a
+# director's toggle gesture — same "concrete, not arbitrary" reasoning as the
+# record markers below (a SubGestureRecognizer run only ever emits once per
+# continuous phrase, so two separate runs in a row can only happen deliberately).
+# "S" (not "T") deliberately: rule matching checks patterns in list order and a
+# 1-length pattern always matches as soon as its own tail element arrives, so a
+# 2-length pattern built from a symbol that ALREADY has a 1-length rule (T does,
+# for reset_tempo) could never actually fire — the 1-length rule wins first,
+# every time. "S" has no 1-length rule to collide with. Argument-less only, same
+# scope limit as handover()/reset_tempo() — a general "toggle ANY named metric"
+# would need the parameterised-gesture mechanism this module's own docstring
+# already flags as unbuilt; this is one fixed, named toggle.
 DEFAULT_RULES: List[GestureRule] = [
     GestureRule(pattern=("L",), gesture=Gesture("handover")),
     GestureRule(pattern=("T",), gesture=Gesture("reset_tempo")),
+    GestureRule(pattern=("S", "S"), gesture=Gesture("toggle_singability")),
 ]
 
 # Record markers (§10.2), chosen for a concrete reason, not arbitrarily: a single

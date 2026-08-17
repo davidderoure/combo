@@ -13,7 +13,7 @@ from pathlib import Path
 import ensemble.wolfson.phrase_generator as wolfson_phrase_generator
 from ensemble import MACHINE_SPEED, REAL_TIME, Session, Voice, chord_tone_generator, drum_generator
 from ensemble.comping import BUSY_THRESHOLD, INTENSITY_SPREAD, SPARSE_THRESHOLD, comping_generator
-from ensemble.director import Director, constant_director_source, ensemble_intensity_critic
+from ensemble.director import Director, DirectorSignal, constant_director_source, ensemble_intensity_critic
 from ensemble.drums import ACOUSTIC_SNARE, CLOSED_HI_HAT, RIDE_CYMBAL_1
 from ensemble.listening import density as listening_density
 from ensemble.listening import synthetic_varying_density_generator
@@ -343,6 +343,26 @@ def demo_sax_wolfson(chart_path: Path) -> None:
     Session(song=slow_song, voices=[gig_bass, gig_sax]).generate(mode=MACHINE_SPEED)
     print(f"    after gig (same memory, fresh Session): recall_motifs() top pattern = "
           f"{memory.recall_motifs().most_common(1)}")
+
+    print("\n  Director gesture toggle (DESIGN.md §11, Phase 13): the first real")
+    print("  consumer of DirectorSignal.gesture since the dial channel was built --")
+    print("  every phase since Phase 5 had repeated some version of \"a director-")
+    print("  emitted gesture has nowhere to act.\" A director sitting at a keyboard")
+    print("  can use the SAME gesture vocabulary a performer would (role determines")
+    print("  destination, not capability -- input/sources.py) -- here simulated with")
+    print("  a scripted DirectorSource emitting Gesture(\"toggle_singability\") on bar 0:\n")
+
+    def toggle_on_bar_zero(song, bar_index, timeline):
+        gesture = Gesture("toggle_singability") if bar_index == 0 else None
+        return DirectorSignal(intensity=0.5, gesture=gesture)
+
+    toggle_director = Director(id="teacher", source="ai", signal_source=toggle_on_bar_zero)
+    toggle_bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    toggle_sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", seed=6)
+    toggle_sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=toggle_sax_gen)
+    print(f"    critic_weights['singability'] before: {toggle_sax_gen.critic_weights['singability']}")
+    Session(song=slow_song, voices=[toggle_bass, toggle_sax], directors=[toggle_director]).generate(mode=MACHINE_SPEED)
+    print(f"    critic_weights['singability'] after a bar-0 toggle gesture: {toggle_sax_gen.critic_weights['singability']}")
 
 
 @contextmanager

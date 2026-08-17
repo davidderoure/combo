@@ -225,7 +225,15 @@ class MusicalityScore:
     overall: float
 
 
-def musicality_score(notes: list, chord_idx: int, seed_phrase: list) -> MusicalityScore:
+def musicality_score(notes: list, chord_idx: int, seed_phrase: list, weights: dict = None) -> MusicalityScore:
+    """weights, if given, overrides DEFAULT_WEIGHTS for the overall combination
+    only -- every sub-score is still computed and reported regardless (a metric
+    "turned off" by setting its weight to 0.0 is still visible on the returned
+    MusicalityScore, just not counted toward overall). Phase 13, DESIGN.md §11:
+    the first per-session/per-gesture configuration point for the critic --
+    see ensemble/sax.py's sax_generator for a live consumer (a director's
+    toggle_singability gesture zeroing this at runtime)."""
+    weights = weights if weights is not None else DEFAULT_WEIGHTS
     scores = {
         "tonal_conformity": tonal_conformity(notes, chord_idx),
         "contour_smoothness": contour_smoothness(notes),
@@ -233,5 +241,5 @@ def musicality_score(notes: list, chord_idx: int, seed_phrase: list) -> Musicali
         "call_response_relatedness": call_response_relatedness(seed_phrase, notes),
         "singability": singability(notes),
     }
-    overall = sum(scores[key] * weight for key, weight in DEFAULT_WEIGHTS.items())
+    overall = sum(scores[key] * weights.get(key, 0.0) for key in scores)
     return MusicalityScore(overall=overall, **scores)

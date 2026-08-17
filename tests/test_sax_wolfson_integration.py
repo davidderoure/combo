@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 import ensemble.wolfson.phrase_generator as wolfson_phrase_generator
-from ensemble.director import Director, constant_director_source
+from ensemble.director import Director, DirectorSignal, constant_director_source
 from ensemble.generators import chord_tone_generator
 from ensemble.memory import RehearsalMemory
 from ensemble.sax import DEFAULT_MOTIF_STRENGTH, sax_generator
@@ -222,6 +222,38 @@ def test_memory_stores_a_real_computed_musicality_score():
     # Not every chunk's score should coincidentally land on the bare default (1.0)
     # used when no score is passed at all -- proof a real computation happened.
     assert any(entry["score"] != 1.0 for entry in mem._phrases)
+
+
+def test_director_gesture_toggles_singability_weight():
+    """Phase 13: the first real consumer of DirectorSignal.gesture since the
+    dial channel was built (Phase 5) -- deterministic, not a re-derivation of
+    the musical effect: checks sax_generator's exposed critic_weights directly
+    (same "reach into state when there's no dedicated accessor" convention as
+    RehearsalMemory._phrases above), matching this codebase's own established
+    lesson to verify via the same computation or direct state, not statistics."""
+    from gesture.vocabulary import Gesture
+
+    def toggle_on_bar_zero(song, bar_index, timeline):
+        gesture = Gesture("toggle_singability") if bar_index == 0 else None
+        return DirectorSignal(intensity=0.5, gesture=gesture)
+
+    director = Director(id="teacher", source="ai", signal_source=toggle_on_bar_zero)
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", seed=1)
+    sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+
+    assert sax_gen.critic_weights["singability"] != 0.0  # default, before any gesture arrives
+
+    Session(song=load_blues(), voices=[bass, sax], directors=[director]).generate()
+
+    assert sax_gen.critic_weights["singability"] == 0.0  # flipped off by the bar-0 gesture
+
+    # Toggling again (a second Session sharing the same sax_gen closure) flips it back on.
+    director2 = Director(id="teacher", source="ai", signal_source=toggle_on_bar_zero)
+    bass2 = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax2 = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+    Session(song=load_blues(), voices=[bass2, sax2], directors=[director2]).generate()
+    assert sax_gen.critic_weights["singability"] != 0.0
 
 
 def test_voice_order_does_not_affect_output():

@@ -59,6 +59,21 @@ recall_motifs() favours motifs from higher-scoring phrases — see
 ensemble/critic.py's module docstring for how "quality" is measured and how
 honestly-placeholder that is.
 
+Director gesture toggle (Phase 13, DESIGN.md §11): the first real consumer of
+DirectorSignal.gesture since the dial channel was built (Phase 5) — every phase
+since had repeated some version of "a director-emitted gesture has nowhere to
+act." Checked every bar (not just at chunk-build time, so a mid-chunk gesture
+isn't missed): Gesture("toggle_singability") flips a mutable, session-local copy
+of ensemble/critic.py's DEFAULT_WEIGHTS between singability counting toward
+musicality_score's overall and not, letting a director (human or AI, and per
+Phase 13's "role determines destination, not capability" principle, a director
+sitting at a keyboard using the exact same gesture vocabulary a performer would)
+turn the singability metric on/off live — useful, for instance, when a teacher
+wants to let a student's fast, exploratory playing not be marked down for being
+unsustained. Exposed as generate.critic_weights (a plain attribute on the
+returned closure) so tests can assert the toggle happened directly, rather than
+re-deriving the effect statistically.
+
 Explicitly deferred (see DESIGN.md §12 for the full list): all ~10 of
 PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, register
 contrast, etc. — motif_targets/motif_strength are now wired, via memory) are left
@@ -76,7 +91,7 @@ from typing import List, Optional, Tuple
 
 from song.chord import Chord
 
-from .critic import musicality_score
+from .critic import DEFAULT_WEIGHTS, musicality_score
 from .memory import RehearsalMemory
 from .timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from .voice import Generator
@@ -234,8 +249,12 @@ def sax_generator(
         random.seed(seed)
     phrase_gen = PhraseGenerator(instrument="sax", model_path=model_path)
     plan: deque = deque()
+    critic_weights = dict(DEFAULT_WEIGHTS)
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
+        if director_signal.gesture is not None and director_signal.gesture.name == "toggle_singability":
+            critic_weights["singability"] = 0.0 if critic_weights["singability"] else DEFAULT_WEIGHTS["singability"]
+
         bar_start = bar_index * BEATS_PER_BAR
 
         if not plan:
@@ -259,10 +278,11 @@ def sax_generator(
                 motif_strength=DEFAULT_MOTIF_STRENGTH if motif_targets else 0.0,
             )
             if memory is not None:
-                score = musicality_score(notes, chord_idx, seed_phrase).overall
+                score = musicality_score(notes, chord_idx, seed_phrase, weights=critic_weights).overall
                 memory.store(notes, score=score)
             plan.extend(_split_phrase_into_bars(notes, bar_start, span_bars, register))
 
         return plan.popleft()
 
+    generate.critic_weights = critic_weights  # exposed for testing -- see module docstring
     return generate

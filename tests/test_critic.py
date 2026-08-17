@@ -183,3 +183,23 @@ def test_musicality_score_overall_is_the_documented_weighted_sum():
         + score.singability * DEFAULT_WEIGHTS["singability"]
     )
     assert score.overall == pytest.approx(expected_overall)
+
+
+def test_musicality_score_weights_can_be_overridden_per_call():
+    """Phase 13: the per-session/per-gesture configuration point (DESIGN.md §11)
+    -- every sub-score is still computed regardless of weights (a metric "turned
+    off" is still visible on the returned score), only overall's combination
+    changes."""
+    notes = notes_from_pitches([60, 62, 64, 60, 62, 64], duration_beats=0.95)
+    seed = notes_from_pitches([60, 62, 64])
+
+    default_score = musicality_score(notes, C_MAJOR, seed)
+    zeroed_weights = dict(DEFAULT_WEIGHTS, singability=0.0)
+    zeroed_score = musicality_score(notes, C_MAJOR, seed, weights=zeroed_weights)
+
+    assert zeroed_score.singability == default_score.singability  # sub-score still reported
+    assert zeroed_score.overall != default_score.overall  # but no longer counted toward overall
+    expected_overall_without_singability = default_score.overall - (
+        default_score.singability * DEFAULT_WEIGHTS["singability"]
+    )
+    assert zeroed_score.overall == pytest.approx(expected_overall_without_singability)

@@ -2,11 +2,14 @@
 
 from input.sources import DIRECTOR, PERFORMER, MidiSourceConfig
 
-# One entry per MIDI source, tagged by role (DESIGN.md §6): "performer" sources
-# feed a GestureRecognizer (note-level pitch tracking -> named gestures);
-# "director" sources read a live Control Change value into the shared intensity
-# dial (§11), not note-level input at all. See `python listen.py --list` for
-# available port indices.
+# One entry per MIDI source, tagged by role (DESIGN.md §6/§11). Since Phase 13,
+# role determines DESTINATION, not capability: every source gets the same
+# GestureRecognizer (note-level pitch tracking -> named gestures) and live-CC
+# intensity tracking — a director sitting at a keyboard uses the same interface
+# a performer does ("dual control car"). "performer" gestures reach
+# Session.gesture_source (TransitionController); "director" gestures/intensity
+# reach a DirectorSignal. See `python listen.py --list` for available port
+# indices.
 #
 # Defaults to a single performer on port 0 — behaviourally equivalent to the old
 # single-port setup. To add a director once a second MIDI device is available:

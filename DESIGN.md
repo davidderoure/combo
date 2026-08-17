@@ -33,11 +33,12 @@ listening to the ensemble's own combined density — the first real "AI critic,"
 just a manually-supplied constant. MIDI input (`input/sources.py`) now dispatches by
 role from `config.MIDI_SOURCES`: performer sources each get their own
 `MidiListener`/`GestureRecognizer` pair (§2's multi-human principle — this is no
-longer just an unwired data-model gap), director sources get a `DirectorMidiListener`
-reading a live Control Change into the intensity dial. Verified with a real (if
-virtual, via macOS's IAC Driver) MIDI port end-to-end — an actual note-on produced
-`Gesture("handover")`, an actual CC message updated a live intensity value — though
-not against physical hardware, which this environment doesn't have. Handover
+longer just an unwired data-model gap), director sources get the same
+`MidiListener` (unified in Phase 13 — see below) reading a live Control Change into
+the intensity dial. Verified with a real (if virtual, via macOS's IAC Driver) MIDI
+port end-to-end — an actual note-on produced `Gesture("handover")`, an actual CC
+message updated a live intensity value — though not against physical hardware,
+which this environment doesn't have. Handover
 transitions (`ensemble/transitions.py`, `TransitionController`) let a recognised
 `handover()` shorten the current section to end after its current chorus — every
 existing generator picks this up with zero code changes, since `Session` now passes
@@ -91,7 +92,28 @@ retrospective scoring functions (singability's bell curve, voice-leading's
 chord-tone resolution). All five metrics (`tonal_conformity`, `contour_smoothness`,
 `repetition`, `call_response_relatedness`, `singability`) are pure, deterministic
 functions needing no model inference — the first sax-adjacent test file since
-Phase 8 that's fully testable without `sax_best.pt`. All with passing tests.
+Phase 8 that's fully testable without `sax_best.pt`. MIDI input is now unified
+(Phase 13): checking a specific request (a director should be able to use the
+same interface a performer does, "dual control car") surfaced a general
+principle — **role determines destination, not recognition capability**. Checked
+directly: `DirectorMidiListener` really did only handle Control Change, ignoring
+notes entirely, but `GestureRecognizer`/`MidiListener` never cared who was
+playing. `DirectorMidiListener` is retired; `MidiListener` (`input/midi_listener.py`)
+is now the one listener type for every source, gaining an optional `cc_number`
+alongside its existing recognizer — recognition is uniform, `input/sources.py`
+now only varies *where* a source's output is routed by role. This gave
+`DirectorSignal.gesture` its first real consumer since the dial channel was built
+in Phase 5 (every phase since had repeated some version of "a director-emitted
+gesture has nowhere to act"): a new seed gesture, two same-note-repeat runs in a
+row (`("S","S")`, not `("T","T")` — checked and confirmed the obvious choice
+would have collided with the existing single-`"T"` `reset_tempo()` rule and
+never actually fired), toggles whether `ensemble/critic.py`'s `singability`
+metric counts toward `RehearsalMemory`'s quality weighting — letting a director
+or teacher turn it off live for a student playing fast, exploratory lines that
+shouldn't be marked down for being unsustained. `Voice` and `Director` remain
+deliberately distinct types (different `Session` contracts — merged timeline
+content vs. an aggregated-away signal); only the input-recognition layer
+unified. All with passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
 skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
@@ -101,20 +123,29 @@ gesture vocabulary layer; real swing-timing (triplet-based ride) and generative/
 behaviour within drums; "mirrored" builds near arc peaks and the same-register
 role-split default applied between two accompanists, within accompaniment-listening —
 both need machinery (the *rest* of `ArcController`, role assignment) that doesn't
-exist yet; within the director, a consumer for the gesture channel and batch-mode
-scoring; within MIDI input, the audience/room-mic path, and any verification against
-real (non-virtual) hardware; within transitions, "pulling late" (no gesture for it
-yet), genuine total-length shortening, and wiring the director's gesture channel to
-`TransitionController`; within sax's real generation, all ~10 of the ported model's
-OTHER rule-based bias-layer knobs (contour, energy arc, register contrast, etc. —
-left at their defaults; `rhythmic_density` and, via memory, `motif_targets`/
-`motif_strength` are wired), hidden-state continuity *between* planned chunks (it
-now exists *within* one chunk, which can span several bars, chord-hold permitting
-— a real extension from Phases 8/9, not a full solve), and any voice besides sax;
-within the critic, real tuning of every weight/threshold it uses (`DEFAULT_WEIGHTS`,
-the contour-smoothness and near-repeat placeholders — all explicitly unvalidated,
-same status as every other hand-picked constant in this codebase) and any
-consumer besides `RehearsalMemory` — the "chess" search/evaluate-alternatives idea
+exist yet; within the director, batch-mode scoring (the gesture channel now has its
+first consumer, §11/§12, though only one gesture and one voice so far); within MIDI
+input, a source feeding more than one destination at once (a performer's gesture
+*also* reaching a `DirectorSignal` — representable now, not built), live human
+note-capture into the `Timeline` for a `source="human"` `Voice` (a separate, much
+bigger, entirely unbuilt capability), `listen.py` becoming a full live-performance
+driver that runs an actual `Session.generate(mode=REAL_TIME)` concurrently with
+input (found while closing the director-gesture gap: even a *performer's* live
+gestures don't reach a running `Session` today, `listen.py` only prints them), the
+audience/room-mic path, and any verification against real (non-virtual) hardware;
+within transitions, "pulling late" (no gesture for it yet), genuine total-length
+shortening, and wiring the director's gesture channel to `TransitionController`
+specifically (it now reaches `sax_generator`, not yet transitions); within sax's
+real generation, all ~10 of the ported model's OTHER rule-based bias-layer knobs
+(contour, energy arc, register contrast, etc. — left at their defaults;
+`rhythmic_density` and, via memory, `motif_targets`/`motif_strength` are wired),
+hidden-state continuity *between* planned chunks (it now exists *within* one chunk,
+which can span several bars, chord-hold permitting — a real extension from Phases
+8/9, not a full solve), and any voice besides sax; within the critic, real tuning
+of every weight/threshold it uses (`DEFAULT_WEIGHTS`, the contour-smoothness and
+near-repeat placeholders — all explicitly unvalidated, same status as every other
+hand-picked constant in this codebase) and any consumer besides `RehearsalMemory`'s
+weighting and sax's own toggle — the "chess" search/evaluate-alternatives idea
 (§13) is the obvious next consumer for a phrase critic but remains a separate,
 explicitly deferred direction, not attempted by this phase.
 See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`

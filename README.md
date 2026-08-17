@@ -120,20 +120,34 @@ output rather than left implicit. Also unbuilt: batch-mode scoring.
 The sixth piece is **multi-role MIDI input** (DESIGN.md §6, `input/sources.py`) —
 the live-human-input gap the director and voices both had is now closed for the
 performer and director roles. `config.MIDI_SOURCES` lists role-tagged sources;
-`start_midi_sources` dispatches each to a `MidiListener`/`GestureRecognizer` pair
-(performer) or a new `DirectorMidiListener` (director — reads one MIDI Control
-Change into a live intensity value, `as_source()` returning a `DirectorSource` that
-always reflects the *current* value, not a frozen snapshot, so a real fader genuinely
-drives `Session.generate`'s per-bar aggregation as it moves). This environment has no
-physical MIDI hardware, but does have macOS's virtual IAC Driver ports — used to
-verify the whole pipeline for real rather than only in the abstract: an actual note-on
-sent through a real (if virtual) port produced `Gesture("handover")` end-to-end, and
-an actual CC message updated a live intensity value correctly. The automated test
-suite stays hardware-independent regardless (`tests/test_midi_sources.py`, feeding
-synthetic MIDI byte tuples directly, the same technique `gesture/recognizer.py`'s own
-tests use), since the IAC-based check depends on macOS-specific infrastructure not
-guaranteed present elsewhere. Not built: the audience/room-mic path, and anything
-verified against real physical hardware.
+`start_midi_sources` dispatches each to a `MidiListener`/`GestureRecognizer` pair.
+This environment has no physical MIDI hardware, but does have macOS's virtual IAC
+Driver ports — used to verify the whole pipeline for real rather than only in the
+abstract: an actual note-on sent through a real (if virtual) port produced
+`Gesture("handover")` end-to-end, and an actual CC message updated a live intensity
+value correctly. The automated test suite stays hardware-independent regardless
+(`tests/test_midi_sources.py`, feeding synthetic MIDI byte tuples directly, the same
+technique `gesture/recognizer.py`'s own tests use), since the IAC-based check
+depends on macOS-specific infrastructure not guaranteed present elsewhere.
+
+**Updated in Phase 13** (DESIGN.md §11): checking a specific request — a director
+should be able to use the *same* interface a performer does, not a crippled dial
+("dual control car") — surfaced a general principle: **role determines
+destination, not recognition capability**. `DirectorMidiListener`, checked
+directly, really did only handle Control Change and silently ignored notes
+entirely; but `GestureRecognizer`/`MidiListener` never cared who was playing.
+`DirectorMidiListener` is retired — `MidiListener` (`input/midi_listener.py`) is
+now the one listener type for every source, with an optional `cc_number`
+alongside its existing recognizer, so recognition is uniform and only *routing*
+varies by role (`input/sources.py`'s `_director_source` latches a director's
+recognised gesture and returns it, consumed once, alongside live intensity — the
+same "current value, not a frozen snapshot" pattern the old dial channel already
+used, extended to a discrete event). Not built: a source feeding more than one
+destination at once (representable now, not wired up), live human note-capture
+into the `Timeline` for a `source="human"` `Voice`, `listen.py` becoming a full
+live-performance driver (found along the way: even a performer's live gestures
+don't reach a running `Session` today, `listen.py` only prints them), the
+audience/room-mic path, and anything verified against real physical hardware.
 
 The seventh piece is **handover/transition triggers** (DESIGN.md §8,
 `ensemble/transitions.py`) — the first real slice of the long-referenced
@@ -260,7 +274,23 @@ Deliberately still deferred, same scope-cut discipline as every earlier phase: a
 contrast, ...) stay at their defaults; hidden-state continuity still resets
 *between* planned chunks; the "chess" search-and-evaluate idea (§13) is the
 obvious next consumer for a phrase critic but remains separate, not attempted
-here. This is also the **first piece needing a binary artifact
+here.
+
+**A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
+first real consumer of `DirectorSignal.gesture` since the dial channel was built
+in Phase 5 (every phase since had repeated some version of "a director-emitted
+gesture has nowhere to act"). A new seed gesture, two same-note-repeat runs in a
+row (`gesture/vocabulary.py`'s `("S","S")` — not `("T","T")`, which was checked
+and confirmed would have collided with the existing single-`"T"` `reset_tempo()`
+rule and never actually fired: rules are matched in list order and a 1-length
+pattern always wins as soon as its own tail element arrives), flips
+`sax_generator`'s mutable `critic_weights["singability"]` between the default
+and `0.0` — letting a director or teacher turn the metric off live for a
+student's fast, exploratory playing that shouldn't be marked down for being
+unsustained, without touching the other four metrics. `musicality_score` itself
+just grew an optional `weights` parameter to make this possible (every sub-score
+is still computed and reported regardless of what counts toward `overall`).
+This is also the **first piece needing a binary artifact
 not present in a fresh clone** — the trained weights
 (`ensemble/wolfson/models/sax_best.pt`) are gitignored, not committed (see Running,
 below), so its integration tests skip
