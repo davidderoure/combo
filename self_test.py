@@ -24,13 +24,17 @@ response — needs a "live performance driver" that doesn't exist yet.
 
 import argparse
 from pathlib import Path
+from typing import List, Tuple
 
 from config import MIDI_OUTPUT_PORT
-from ensemble import MACHINE_SPEED, Session, Voice, chord_tone_generator, drum_generator
+from ensemble import MACHINE_SPEED, NoteEvent, Session, Voice, drum_generator
 from ensemble.comping import comping_generator
+from ensemble.generators import place_in_register
 from ensemble.memory import RehearsalMemory
 from ensemble.roles import default_accompanist_roles
 from ensemble.sax import sax_generator
+from ensemble.timeline import BEATS_PER_BAR
+from ensemble.voice import Generator
 from output.midi_output import list_output_ports, play_timeline
 from song import parse_chart
 
@@ -47,14 +51,52 @@ SAX_WEIGHTS_PATH = Path(__file__).resolve().parent / "ensemble" / "wolfson" / "m
 # MIDI channel is a rendering concern, not a generation one.
 CHANNELS = {"bass": 1, "sax": 2, "keys": 3, "guitar": 4, "drums": 10}
 
+WALKING_BASS_VELOCITY = 75
+# Just under a full beat, not a placeholder chosen by ear against a specific
+# patch: leaves a hair of articulation between notes rather than an exact
+# back-to-back note-off/note-on, still ringing through almost the whole beat.
+WALKING_BASS_NOTE_DURATION = 0.92
+
+
+def walking_bass_stub(register: Tuple[int, int]) -> Generator:
+    """self_test.py's own bass stand-in -- still not real bass generation (that's
+    an entirely unbuilt voice, like sax was before Phase 8), but a better fit for
+    being actually heard than ensemble/generators.py's chord_tone_generator,
+    which self_test.py used originally. Heard directly (not assumed): a real bass
+    sample playing chord_tone_generator's simultaneous root+fifth double-stop,
+    twice a bar with a full beat of silence after each hit, sounded thuddy and
+    staccato -- the double-stop and the gaps, not note duration alone. This plays
+    a single note every beat (quarter notes, not a double-stop), alternating
+    root/fifth, sustained for nearly the full beat so it rings continuously."""
+
+    def generate(song, bar_index: int, timeline, director_signal) -> List[NoteEvent]:
+        events: List[NoteEvent] = []
+        for beat_offset in (0.0, 1.0, 2.0, 3.0):
+            beat = bar_index * BEATS_PER_BAR + beat_offset
+            chord = song.chord_at(beat)
+            pitch_class = chord.root if beat_offset in (0.0, 2.0) else (chord.root + 7) % 12
+            pitch = place_in_register(pitch_class, register)
+            events.append(
+                NoteEvent(
+                    voice_id="",
+                    pitch=pitch,
+                    velocity=WALKING_BASS_VELOCITY,
+                    start_beat=beat,
+                    duration_beats=WALKING_BASS_NOTE_DURATION,
+                )
+            )
+        return events
+
+    return generate
+
 
 def build_voices(memory: RehearsalMemory) -> list:
     bass = Voice(
         id="bass",
-        instrument="bass (chord-tone stub -- real bass generation isn't built yet)",
+        instrument="bass (walking-bass stub -- real bass generation isn't built yet)",
         register=BASS_REGISTER,
         source="ai",
-        generator=chord_tone_generator(BASS_REGISTER),
+        generator=walking_bass_stub(BASS_REGISTER),
     )
     voices = [bass]
 
