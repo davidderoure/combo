@@ -63,7 +63,24 @@ mechanism was needed — checked directly in `ensemble/transitions.py` and
 `song/song.py`, not assumed: a handover only ever changes `Song.form`, never
 `Song.changes`, and `chord_at` only ever reads `changes`, so a plan's chord
 assumptions can never go stale between when it's built and when it's dispensed.
-All with passing tests.
+Sax also now has rehearsal memory (`ensemble/memory.py`, `RehearsalMemory`) — the
+first thing in combo that persists across separate `Session.generate()` calls,
+prompted directly by David distinguishing search-in-flight ("the chess approach,"
+still deferred) from *rehearsal*: play a piece more than once, carry what worked
+into the next run, and the actual performance happens on the fly but is informed
+by that practice. Real prior art was found and partly reused: wolfson's
+`memory/phrase_memory.py`/`input/phrase_analyzer.py` already had this shape
+(`extract_interval_motifs`, ported near-verbatim into `ensemble/wolfson/motifs.py`;
+`PhraseMemory`'s store/recall pattern re-authored, not ported, since its reset
+policy — between `ArcController`'s arc loops within one performance — doesn't fit
+persisting *across* performances). No evaluation of what's worth remembering is
+attempted — `recall_motifs()` just leans toward whatever motif recurred most,
+stated as a deliberate simplification, not a gap (see `ensemble/memory.py`'s
+docstring for what real evaluation would need). Wiring was verified with a spy on
+`PhraseGenerator.generate`'s actual call arguments, not the musical output —
+a real empirical probe found the model only follows a fed-in motif rarely (2/40
+trials), which is why the test asserts the *plumbing* deterministically rather
+than the stochastic musical effect. All with passing tests.
 **Not yet built even within these MVPs**: role assignment, same-instrument doubling
 and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
 skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
@@ -77,12 +94,17 @@ exist yet; within the director, a consumer for the gesture channel and batch-mod
 scoring; within MIDI input, the audience/room-mic path, and any verification against
 real (non-virtual) hardware; within transitions, "pulling late" (no gesture for it
 yet), genuine total-length shortening, and wiring the director's gesture channel to
-`TransitionController`; within sax's real generation, all ~11 of the ported model's
-OTHER rule-based bias-layer knobs (contour, energy arc, motif, register contrast,
-etc. — left at their defaults, only `rhythmic_density` is wired), hidden-state
-continuity *between* planned chunks (it now exists *within* one chunk, which can
-span several bars, chord-hold permitting — a real extension from Phases 8/9, not a
-full solve), and any voice besides sax.
+`TransitionController`; within sax's real generation, all ~10 of the ported model's
+OTHER rule-based bias-layer knobs (contour, energy arc, register contrast, etc. —
+left at their defaults; `rhythmic_density` and, via memory, `motif_targets`/
+`motif_strength` are wired), hidden-state continuity *between* planned chunks (it
+now exists *within* one chunk, which can span several bars, chord-hold permitting
+— a real extension from Phases 8/9, not a full solve), any voice besides sax, and
+any evaluation of what's worth remembering in `RehearsalMemory` (an actual critic
+judging quality, not just recency/frequency — the natural home for it is the
+still-unbuilt batch-mode scoring above); the "chess" search/evaluate-alternatives
+idea remains a separate, explicitly deferred direction from rehearsal memory, not
+attempted by it.
 See `/Users/davidderoure/.claude/plans/modular-dazzling-emerson.md`
 for the full build-order plan across all remaining subsystems.
 **Open research questions, not yet answered**: can sub-gesture sequences compose into

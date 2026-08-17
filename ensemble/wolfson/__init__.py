@@ -6,6 +6,16 @@ generator/phrase_generator.py, data/encoding.py, data/chords.py, data/scales.py)
 the trained model architecture, its token vocabulary, and its full inference-time
 bias-layer pipeline — none of that algorithmic content has been changed.
 
+Also ported (Phase 11, DESIGN.md §12): motifs.py's extract_interval_motifs, from
+wolfson's input/phrase_analyzer.py — a small, self-contained pure function (2/3/4-
+note interval n-grams from a phrase) used by ensemble/memory.py's RehearsalMemory.
+wolfson's own memory/phrase_memory.py (PhraseMemory) was NOT ported — its reset
+policy (between 5-minute ArcController loops, within one live performance) doesn't
+match what cross-performance rehearsal memory needs (persist across separate
+Session.generate() calls, reset only when a caller starts a new RehearsalMemory);
+ensemble/memory.py is combo-authored, inspired by PhraseMemory's store/recall shape
+but not a port of it.
+
 What's mechanically different from the wolfson source, purely to make these files
 work as a package inside combo rather than as scripts run from wolfson's own repo
 root:

@@ -13,7 +13,8 @@ import pytest
 import ensemble.wolfson.phrase_generator as wolfson_phrase_generator
 from ensemble.director import Director, constant_director_source
 from ensemble.generators import chord_tone_generator
-from ensemble.sax import sax_generator
+from ensemble.memory import RehearsalMemory
+from ensemble.sax import DEFAULT_MOTIF_STRENGTH, sax_generator
 from ensemble.session import Session
 from ensemble.timeline import BEATS_PER_BAR
 from ensemble.voice import Voice
@@ -101,22 +102,23 @@ def test_director_intensity_shifts_average_note_duration():
 
 
 @contextmanager
-def counting_phrase_generator_calls():
-    """Spy on PhraseGenerator.generate's call count — wraps the real method,
-    delegates to it, counts invocations, restores the original after. Not a
-    mock: the real model still runs every call, matching this codebase's
+def spying_on_phrase_generator_calls():
+    """Spy on PhraseGenerator.generate's calls — wraps the real method,
+    delegates to it, records each call's kwargs, restores the original after.
+    Not a mock: the real model still runs every call, matching this codebase's
     no-mocking-framework norm and its own "verify via a spy, not independent
-    re-derivation" lesson (see the Phase 8 postmortem)."""
+    re-derivation" lesson (see the Phase 8 postmortem). Yields a list of kwargs
+    dicts, one per call in order — a call count is just len(calls)."""
     original = wolfson_phrase_generator.PhraseGenerator.generate
-    counter = {"calls": 0}
+    calls = []
 
-    def counting_generate(self, *args, **kwargs):
-        counter["calls"] += 1
+    def recording_generate(self, *args, **kwargs):
+        calls.append(kwargs)
         return original(self, *args, **kwargs)
 
-    wolfson_phrase_generator.PhraseGenerator.generate = counting_generate
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
     try:
-        yield counter
+        yield calls
     finally:
         wolfson_phrase_generator.PhraseGenerator.generate = original
 
@@ -135,34 +137,74 @@ def test_plan_buffer_makes_fewer_generate_calls_than_bars_on_blues():
         id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
         generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7),
     )
-    with counting_phrase_generator_calls() as counter:
+    with spying_on_phrase_generator_calls() as calls:
         Session(song=song, voices=[bass, sax]).generate()
-    assert counter["calls"] < n_bars
+    assert len(calls) < n_bars
 
 
-def test_plan_buffer_makes_far_fewer_calls_on_a_slow_harmonic_rhythm_chart():
-    """A directly-constructed Song with one chord held for 8 bars (32 beats) —
-    same Song-construction pattern as tests/test_transitions.py's own edge-case
-    tests. DEFAULT_PLAN_BARS=4 caps each chunk, so 8 bars should collapse into
-    at most 2 generate() calls — a clear demonstration of the mechanism's real
-    effect on a chart with a realistic-for-many-tunes harmonic rhythm, unlike
-    blues's fast changes above."""
-    song = Song(
-        title="slow changes",
-        changes=Changes([ChangesEvent(Chord.parse("F7"), 32.0)]),
-        form=[Section("A", 1)],
-        tempo_bpm=120,
+def build_slow_song() -> Song:
+    """One chord held for 8 bars (32 beats) — same construction pattern as
+    test_transitions.py's own edge-case tests. DEFAULT_PLAN_BARS=4 caps each
+    chunk, so this always produces exactly 2 plan chunks per run — used both
+    for the call-count test below and the rehearsal-memory wiring tests."""
+    return Song(
+        title="slow changes", changes=Changes([ChangesEvent(Chord.parse("F7"), 32.0)]),
+        form=[Section("A", 1)], tempo_bpm=120,
     )
-    n_bars = 8
+
+
+def make_slow_session(memory=None, seed: int = 7) -> Session:
     bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
     sax = Voice(
         id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
-        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7),
+        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", memory=memory, seed=seed),
     )
-    with counting_phrase_generator_calls() as counter:
-        Session(song=song, voices=[bass, sax]).generate()
-    assert counter["calls"] == 2  # ceil(8 bars / plan_bars=4) -- exact, not just "fewer"
-    assert counter["calls"] < n_bars
+    return Session(song=build_slow_song(), voices=[bass, sax])
+
+
+def test_plan_buffer_makes_far_fewer_calls_on_a_slow_harmonic_rhythm_chart():
+    """DEFAULT_PLAN_BARS=4 caps each chunk, so build_slow_song()'s 8-bar hold
+    should collapse into exactly 2 generate() calls — a clear demonstration of
+    the mechanism's real effect on a chart with a realistic-for-many-tunes
+    harmonic rhythm, unlike blues's fast changes above."""
+    with spying_on_phrase_generator_calls() as calls:
+        make_slow_session().generate()
+    assert len(calls) == 2  # ceil(8 bars / plan_bars=4) -- exact, not just "fewer"
+    assert len(calls) < 8
+
+
+def test_memory_supplies_motif_targets_to_a_later_chunk_within_one_run():
+    """Within-run persistence: the slow chart produces exactly 2 plan chunks
+    (see build_slow_song). The first chunk's memory is empty (nothing stored
+    yet) -> empty motif_targets; by the second chunk, the first chunk's notes
+    have been stored -> non-empty motif_targets, drawn from what was just
+    played. Proves the plumbing, independent of the model's stochastic
+    response to it (confirmed separately, empirically, to be a real but rare
+    effect — see the Phase 11 plan)."""
+    mem = RehearsalMemory()
+    with spying_on_phrase_generator_calls() as calls:
+        make_slow_session(memory=mem).generate()
+    assert len(calls) == 2
+    assert calls[0]["motif_targets"] == []
+    assert calls[0]["motif_strength"] == 0.0
+    assert calls[1]["motif_targets"] != []
+    assert calls[1]["motif_strength"] == DEFAULT_MOTIF_STRENGTH
+
+
+def test_memory_preloads_a_fresh_session_from_a_previous_one():
+    """Cross-Session persistence: the actual "rehearsal informs the gig" case.
+    One RehearsalMemory, two entirely separate Sessions (fresh Song, fresh
+    Voice, fresh sax_generator/PhraseGenerator each time) sharing only the
+    memory object. The second Session's very first plan chunk should already
+    carry motif_targets from the first Session's material — proof this is
+    genuinely preloaded experience, not just same-run carry-over (which the
+    test above already covers separately)."""
+    mem = RehearsalMemory()
+    make_slow_session(memory=mem, seed=1).generate()  # "rehearsal" run
+
+    with spying_on_phrase_generator_calls() as calls:
+        make_slow_session(memory=mem, seed=2).generate()  # "gig" run, fresh Session
+    assert calls[0]["motif_targets"] != []
 
 
 def test_voice_order_does_not_affect_output():

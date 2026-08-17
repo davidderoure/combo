@@ -43,16 +43,29 @@ dispensed. Verified directly in ensemble/transitions.py and song/song.py, not
 assumed — building a revision mechanism anyway would be untested, unreachable
 code.
 
-Explicitly deferred (see DESIGN.md §12 for the full list): all ~11 of
-PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, motif,
-register contrast, etc.) are left at their defaults — nothing in combo supplies
-them yet, the same "deliberately dumb" spirit as chord_tone_generator itself.
-Hidden-state continuity now exists WITHIN a planned chunk (which can span several
-bars, chord-hold permitting) but still resets BETWEEN chunks — genuinely extended
-from Phase 8/9, not solved. `register` is a backstop that drops out-of-range
-notes, not a real voicing control like it is in
-chord_tone_generator/comping_generator — Wolfson's trained pitch vocabulary is
-hard-clipped to MIDI 44-93 by the model itself.
+Rehearsal memory (Phase 11, DESIGN.md §12): sax_generator optionally takes a
+RehearsalMemory (ensemble/memory.py) — the first thing in combo that persists
+across separate Session.generate() calls, on purpose, unlike everything else here.
+Read and written at exactly the point a new plan chunk is built, which gives two
+kinds of persistence from one piece of code: within-run (chunk 2 can draw on what
+chunk 1 just played, same Session.generate() call) and cross-run (chunk 1 of a
+*new* Session.generate() call can draw on the last chunk of a *previous* one, if
+the same RehearsalMemory object is passed to both — the rehearsal-informs-the-gig
+idea this was built for). No evaluation of what's worth remembering is attempted —
+recall_motifs() just picks whatever interval pattern recurred most; see
+ensemble/memory.py's docstring for why that's a deliberate simplification, not a
+gap, and what real evaluation would need instead.
+
+Explicitly deferred (see DESIGN.md §12 for the full list): all ~10 of
+PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, register
+contrast, etc. — motif_targets/motif_strength are now wired, via memory) are left
+at their defaults — nothing in combo supplies them yet, the same "deliberately
+dumb" spirit as chord_tone_generator itself. Hidden-state continuity now exists
+WITHIN a planned chunk (which can span several bars, chord-hold permitting) but
+still resets BETWEEN chunks — genuinely extended from Phase 8/9, not solved.
+`register` is a backstop that drops out-of-range notes, not a real voicing control
+like it is in chord_tone_generator/comping_generator — Wolfson's trained pitch
+vocabulary is hard-clipped to MIDI 44-93 by the model itself.
 """
 
 from collections import deque
@@ -60,6 +73,7 @@ from typing import List, Optional, Tuple
 
 from song.chord import Chord
 
+from .memory import RehearsalMemory
 from .timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from .voice import Generator
 from .wolfson.chords import N_QUALITIES, QUAL_DIM, QUAL_DOM, QUAL_MAJOR, QUAL_MINOR
@@ -68,6 +82,9 @@ from .wolfson.phrase_generator import REST_PITCH, PhraseGenerator
 DEFAULT_VELOCITY = 75
 DEFAULT_PLAN_BARS = 4  # matches Wolfson's own MAX_PHRASE_BEATS=16.0 -- 4 bars at
                         # 4/4, "the model's own planning horizon," not arbitrary.
+DEFAULT_MOTIF_STRENGTH = 1.0  # placeholder, same status as INTENSITY_SPREAD
+                               # (comping.py) / REFERENCE_MAX_DENSITY (director.py)
+                               # -- needs real tuning once there's a way to hear it.
 
 # combo's 17 canonical qualities (song/chord.py's _QUALITY_ALIASES values) mapped
 # onto Wolfson's 4 harmonic-function classes. Root translation is the identity
@@ -166,6 +183,7 @@ def sax_generator(
     target_voice_id: str,
     lookback_bars: int = 2,
     plan_bars: int = DEFAULT_PLAN_BARS,
+    memory: Optional[RehearsalMemory] = None,
     model_path: Optional[str] = None,
     seed: Optional[int] = None,
 ) -> Generator:
@@ -173,6 +191,13 @@ def sax_generator(
     real LSTM-generated phrase (ensemble/wolfson/), planned plan_bars bars ahead
     (chord-hold permitting — see _bars_until_chord_change) and dispensed one bar
     per call from an internal buffer.
+
+    memory, if given, is consulted and updated every time a new plan chunk is
+    built: the most common motif recalled from it (if any) becomes that chunk's
+    motif_targets, and the chunk's own generated notes are then stored into it —
+    so passing the *same* RehearsalMemory into a later Session/sax_generator call
+    lets that later run draw on this one's material (DESIGN.md §12, Phase 11).
+    Passing no memory (the default) is exactly Phase 10's behaviour, unchanged.
 
     The PhraseGenerator (and its ~3.5MB model weights) is constructed once here,
     not per bar or per plan — reused across the whole session for efficiency.
@@ -214,12 +239,23 @@ def sax_generator(
             since_beat = max(0, bar_index - lookback_bars) * BEATS_PER_BAR
             seed_phrase = _build_seed_phrase(timeline, target_voice_id, since_beat, bar_start)
             chord_idx = chord_to_wolfson_index(song.chord_at(bar_start))
+
+            motif_targets = []
+            if memory is not None:
+                common = memory.recall_motifs().most_common(1)
+                if common:
+                    motif_targets = [common[0][0]]
+
             notes = phrase_gen.generate(
                 seed_phrase,
                 chord_idx=chord_idx,
                 max_phrase_beats=span_bars * BEATS_PER_BAR,
                 rhythmic_density=director_signal.intensity,
+                motif_targets=motif_targets,
+                motif_strength=DEFAULT_MOTIF_STRENGTH if motif_targets else 0.0,
             )
+            if memory is not None:
+                memory.store(notes)
             plan.extend(_split_phrase_into_bars(notes, bar_start, span_bars, register))
 
         return plan.popleft()

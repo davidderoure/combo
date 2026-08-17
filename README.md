@@ -195,11 +195,41 @@ revision logic would have been untestable, unreachable code. `blues_in_f.chart`'
 fast harmonic rhythm (chord changes almost every bar) limits the visible effect
 there (45 `generate()` calls for 60 bars); a chart with an 8-bar chord hold shows it
 clearly (2 calls for 8 bars) — both demonstrated in `ensemble/demo.py`, said
-honestly rather than only showing the flattering case. Deliberately still deferred,
-same scope-cut discipline as every earlier phase: all ~11 of the model's OTHER
-rule-based bias knobs (energy arc, motif, register contrast, ...) stay at their
-defaults; hidden-state continuity now exists *within* a planned chunk but still
-resets *between* chunks. This is also the **first piece needing a binary artifact
+honestly rather than only showing the flattering case.
+
+Sax also has **rehearsal memory** now (Phase 11, `ensemble/memory.py`'s
+`RehearsalMemory`) — **the first thing in combo that persists across separate
+`Session.generate()` calls**, everything else being deliberately fresh-per-
+performance. Prompted by David distinguishing search-in-flight ("the chess
+approach... something I'd like to try later," still deferred) from *rehearsal*:
+play a piece more than once, carry what worked into the next run, so the actual
+performance happens on the fly but is informed by practice. Real prior art existed
+and was partly reused: wolfson's `input/phrase_analyzer.py::extract_interval_motifs`
+(2/3/4-note transposition-invariant interval n-grams) ported near-verbatim into
+`ensemble/wolfson/motifs.py`; wolfson's `memory/phrase_memory.py::PhraseMemory` — a
+close match in shape (store/recall via a `Counter`) — was re-authored rather than
+ported, since its reset policy (between `ArcController`'s arc loops, within one
+live performance) doesn't fit persisting *across* performances. `sax_generator`
+reads and writes `memory` at exactly the point a new plan chunk is built, which
+gives two kinds of persistence from one mechanism: within-run (a later chunk can
+draw on an earlier one, same `Session.generate()` call) and cross-run (a *new*
+`Session.generate()` call can draw on a *previous* one's material, if the same
+`RehearsalMemory` is passed to both — the rehearsal-informs-the-gig case). No
+evaluation of what's worth remembering is attempted: `recall_motifs().most_common(1)`
+just leans toward whatever interval pattern recurred most, a deliberate
+simplification (see the module docstring), not a gap — an actual critic is real,
+separate work, the natural extension of §11's still-deferred batch-mode scoring.
+Tested by spying on `PhraseGenerator.generate`'s actual call arguments (does
+`memory`'s content reach `motif_targets`/`motif_strength`?) rather than the musical
+output — a real empirical probe found the model only follows a fed-in motif rarely
+(2/40 trials over real inference), so a statistical pass/fail test on the musical
+effect would have been unreliable; the demo section shows the qualitative effect
+and says so plainly rather than implying a guaranteed audible callback.
+
+Deliberately still deferred, same scope-cut discipline as every earlier phase: all
+~10 of the model's OTHER rule-based bias knobs (energy arc, contour, register
+contrast, ...) stay at their defaults; hidden-state continuity still resets
+*between* planned chunks. This is also the **first piece needing a binary artifact
 not present in a fresh clone** — the trained weights
 (`ensemble/wolfson/models/sax_best.pt`) are gitignored, not committed (see Running,
 below), so its integration tests skip
@@ -235,16 +265,20 @@ suite is no longer sub-second once torch is imported.
   (DESIGN.md §8 — `TransitionController`, `GestureSource`, `scripted_gesture_source`,
   `LiveGestureQueue`), `sax.py` (DESIGN.md §12 — real generation for the sax voice:
   `chord_to_wolfson_index`, `sax_generator`, `_bars_until_chord_change` +
-  `_split_phrase_into_bars` for the multi-bar planning buffer).
+  `_split_phrase_into_bars` for the multi-bar planning buffer), `memory.py`
+  (DESIGN.md §12 — `RehearsalMemory`, the first state that persists across separate
+  `Session.generate()` calls).
 - `ensemble/wolfson/` — ported generative core from wolfson (DESIGN.md §12):
   `lstm_model.py` (`PhraseModel`), `phrase_generator.py` (`PhraseGenerator`),
-  `encoding.py`, `chords.py`, `scales.py`; provenance and exactly what changed
-  mechanically vs. the source is documented in `__init__.py`. `models/` is
-  gitignored — copy `sax_best.pt` in manually (see Running, below).
+  `encoding.py`, `chords.py`, `scales.py`, `motifs.py` (`extract_interval_motifs`,
+  used by `ensemble/memory.py`); provenance and exactly what changed mechanically
+  vs. the source is documented in `__init__.py`. `models/` is gitignored — copy
+  `sax_best.pt` in manually (see Running, below).
 - `tests/test_recognizer.py`, `tests/test_gesture_vocabulary.py`, `tests/test_song.py`,
   `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
   `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py`,
-  `tests/test_transitions.py`, `tests/test_sax.py` — no MIDI hardware needed
+  `tests/test_transitions.py`, `tests/test_sax.py`, `tests/test_memory.py` — no MIDI
+  hardware needed
 - `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
   skips cleanly if they're not present (see Running, below)
 - `listen.py` — small runnable script: starts every source in `config.MIDI_SOURCES`,

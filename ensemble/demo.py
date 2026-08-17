@@ -17,6 +17,7 @@ from ensemble.director import Director, constant_director_source, ensemble_inten
 from ensemble.drums import ACOUSTIC_SNARE, CLOSED_HI_HAT, RIDE_CYMBAL_1
 from ensemble.listening import density as listening_density
 from ensemble.listening import synthetic_varying_density_generator
+from ensemble.memory import RehearsalMemory
 from ensemble.sax import sax_generator
 from ensemble.timeline import BEATS_PER_BAR, Timeline
 from ensemble.transitions import TransitionController, scripted_gesture_source
@@ -312,6 +313,33 @@ def demo_sax_wolfson(chart_path: Path) -> None:
     with _counting_phrase_generator_calls() as counter:
         Session(song=slow_song, voices=[slow_bass, slow_sax]).generate(mode=MACHINE_SPEED)
     print(f"    one chord held for 8 bars: {counter['calls']} generate() calls for 8 bars")
+
+    print("\n  Rehearsal memory (DESIGN.md §12, Phase 11): one RehearsalMemory shared")
+    print("  across two SEPARATE Session.generate() calls -- \"rehearsal\", then \"gig\",")
+    print("  the first thing in combo that persists across performances. No quality")
+    print("  judgement is attempted (see ensemble/memory.py's docstring) -- whatever")
+    print("  motif recurred most in the rehearsal is what the gig leans toward, and")
+    print("  a real empirical probe (see the Phase 11 plan) found the model actually")
+    print("  follows a fed-in motif only rarely (2/40 trials) -- said honestly here")
+    print("  rather than implied to be a reliable audible callback:\n")
+
+    memory = RehearsalMemory()
+    rehearsal_bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    rehearsal_sax = Voice(
+        id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
+        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", memory=memory, seed=3),
+    )
+    Session(song=slow_song, voices=[rehearsal_bass, rehearsal_sax]).generate(mode=MACHINE_SPEED)
+    print(f"    after rehearsal: recall_motifs() top pattern = {memory.recall_motifs().most_common(1)}")
+
+    gig_bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    gig_sax = Voice(
+        id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
+        generator=sax_generator(SAX_REGISTER, target_voice_id="bass", memory=memory, seed=4),
+    )
+    Session(song=slow_song, voices=[gig_bass, gig_sax]).generate(mode=MACHINE_SPEED)
+    print(f"    after gig (same memory, fresh Session): recall_motifs() top pattern = "
+          f"{memory.recall_motifs().most_common(1)}")
 
 
 @contextmanager
