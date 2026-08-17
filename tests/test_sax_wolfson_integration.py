@@ -373,3 +373,94 @@ def test_voice_order_does_not_affect_output():
     forward = sorted(make(reversed_order=False).generate().events, key=sort_key)
     reversed_ = sorted(make(reversed_order=True).generate().events, key=sort_key)
     assert forward == reversed_
+
+
+def test_search_with_a_motif_target_prefers_higher_adherence_over_higher_overall():
+    """Phase 17: selection uses (motif_adherence, overall) lexicographically, not
+    overall alone. Verified the same way as test_search_picks_the_actual_highest_
+    scoring_candidate above -- real inference, independently recompute both
+    scores for every candidate, confirm the winner is the one with the highest
+    adherence among all candidates generated that chunk (and, among ties on
+    adherence, the highest overall). Holds regardless of how much real
+    stochastic variety this particular run happens to produce."""
+    from ensemble.critic import motif_adherence, musicality_score
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []  # (seed_phrase, kwargs, notes) per call
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        mem = RehearsalMemory()
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(
+            SAX_REGISTER, target_voice_id="bass", memory=mem, seed=3,
+            n_candidates=2, motif_recall_candidates=8,
+        )
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    # build_slow_song() always produces exactly 2 chunks (DEFAULT_PLAN_BARS=4 over
+    # an 8-bar hold): chunk 1 has nothing recalled yet (n_candidates=2 calls),
+    # chunk 2 has memory.recall_motifs() supplying a target
+    # (motif_recall_candidates=8 calls) -- 2 + 8 = 10 total.
+    assert len(candidates) == 10
+    last_chunk = candidates[-8:]
+    motif_targets = last_chunk[0][1]["motif_targets"]
+    assert motif_targets != []  # the scenario this test is actually about
+
+    recomputed = [
+        (motif_adherence(notes, motif_targets), musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall)
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
+    assert [overall for _adherence, overall in recomputed] == sax_gen.last_candidate_scores
+
+    best_key = max(recomputed)
+    winner_notes = last_chunk[recomputed.index(best_key)][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+    second_chunk_start = 4 * BEATS_PER_BAR
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+    assert sax_gen.motif_adherence_log[-1] == best_key[0]
+
+
+def test_motif_recall_candidates_overrides_n_candidates_only_on_recall_chunks():
+    """motif_recall_candidates should be used ONLY for a chunk that actually has
+    a non-empty motif_targets -- the first of build_slow_song()'s 2 chunks never
+    does (nothing recalled yet), the second always does once memory has stored
+    the first chunk's motifs."""
+    mem = RehearsalMemory()
+    with spying_on_phrase_generator_calls() as calls:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax = Voice(
+            id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
+            generator=sax_generator(
+                SAX_REGISTER, target_voice_id="bass", memory=mem, seed=3,
+                n_candidates=2, motif_recall_candidates=7,
+            ),
+        )
+        Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    assert len(calls) == 2 + 7
+    assert calls[0]["motif_targets"] == []
+    assert calls[1]["motif_targets"] == []
+    assert all(c["motif_targets"] != [] for c in calls[2:])
+
+
+def test_motif_recall_candidates_unset_reproduces_n_candidates_for_every_chunk():
+    """Default motif_recall_candidates=None must reproduce n_candidates exactly
+    for every chunk, even one with a non-empty motif_targets -- the concrete
+    backward-compatibility check, same discipline as
+    test_search_with_one_candidate_matches_unset_behaviour above."""
+    mem = RehearsalMemory()
+    with spying_on_phrase_generator_calls() as calls:
+        make_slow_session(memory=mem, seed=3, n_candidates=2).generate()
+    assert len(calls) == 4  # 2 chunks * 2 candidates each -- motif_recall_candidates never overrides

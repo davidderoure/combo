@@ -160,7 +160,43 @@ already built, no new code), and — named honestly as still missing, not
 glossed over — true live rehearsal (a human's live input actually driving the
 ensemble's real-time response) needs a "live performance driver" wiring
 `input/sources.py` into a running `Session.generate(mode=REAL_TIME)`, which
-doesn't exist yet. All with passing tests.
+doesn't exist yet. Once the self-test could actually be heard, David's own
+listening turned up two real gaps, both fixed by measuring rather than
+re-asserting: `self_test.py`'s bass stand-in (Phase 8's `chord_tone_generator`,
+a simultaneous root+fifth double-stop only on beats 1 and 3) sounded thuddy
+and staccato through a real bass sample — replaced with `self_test.py`'s own
+`walking_bass_stub` (quarter notes, alternating root/fifth, near-full-beat
+sustain), local to that script, not the shared/tested `chord_tone_generator`.
+And a controlled A/B test (`rehearsal_ab_test.py`, kept as a reusable tool,
+not a throwaway script) of whether `RehearsalMemory`'s cross-loop persistence
+actually changes anything found a genuine null result at first — traced to
+two real causes, not re-measured harder but fixed: `ensemble/critic.py`'s
+`repetition()` measures whether a chunk repeats a pattern *within itself*,
+with no reference to what memory actually recalled, so a chunk that used the
+recalled motif exactly once (without also repeating it again in that same
+short chunk) scored `0.0` regardless; and `_apply_motif_bias`
+(`phrase_generator.py`) only ever nudges the *next* token once the model has
+already spontaneously started matching the target's prefix by chance — rare
+for a long (3-4 interval) motif. Phase 17 fixed both, entirely in
+combo-authored code, the ported model itself untouched: a new
+`motif_adherence` metric (does a candidate's own output actually contain the
+recalled target, not just repeat itself), `_pick_achievable_motif` (prefer
+the shortest, most achievable recalled motif — grounded directly in
+`_apply_motif_bias`'s own prefix-matching logic), a `(motif_adherence,
+overall)` selection key (provably identical to Phase 14's overall-only
+comparison when nothing's recalled), and `motif_recall_candidates` spending
+extra search on chunks that have a real target — checked empirically to fire
+on most chunks after the first once memory has anything stored, not the rare
+one-off first assumed, though the absolute cost stays fine paid once during
+machine_speed generation. Rerunning `rehearsal_ab_test.py` afterward
+(20 loops, `motif_recall_candidates=20`) found a clean, construction-clear
+effect exactly where it should live: the first plan-chunk of every loop after
+loop 0 — the one place cross-loop persistence specifically acts — scores
+motif_adherence 1.0 for the persistent condition, 0.0 for a fresh-memory
+control, every single time. Whole-run averages are close between conditions
+(~1.00 vs ~0.95-0.98), a real, honest side-effect of the same fix rather than
+a confound: the mechanism is now reliably audible throughout a run, not only
+at rehearsal boundaries. All with passing tests.
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a

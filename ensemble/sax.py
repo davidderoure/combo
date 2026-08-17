@@ -113,12 +113,12 @@ like it is in chord_tone_generator/comping_generator — Wolfson's trained pitch
 vocabulary is hard-clipped to MIDI 44-93 by the model itself.
 """
 
-from collections import deque
+from collections import Counter, deque
 from typing import List, Optional, Tuple
 
 from song.chord import Chord
 
-from .critic import DEFAULT_WEIGHTS, musicality_score
+from .critic import DEFAULT_WEIGHTS, motif_adherence, musicality_score
 from .memory import RehearsalMemory
 from .timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from .voice import Generator
@@ -224,6 +224,26 @@ def _split_phrase_into_bars(
     return bars
 
 
+def _pick_achievable_motif(counter: Counter) -> Optional[tuple]:
+    """RehearsalMemory.recall_motifs() returns a Counter pooling 2-, 3-, and
+    4-interval motifs together, weighted by quality (Phase 12). Picking simply
+    the single most-common entry (any length) risks targeting a motif
+    _apply_motif_bias (ensemble/wolfson/phrase_generator.py) can essentially
+    never fire for: that function only biases the next token once the
+    immediately preceding (motif_len - 1) generated intervals already match by
+    chance -- a 2-interval motif needs just 1 prior interval to coincide, a
+    4-interval motif needs 3 in a row, dramatically rarer. Preferring the
+    most-common motif from the SHORTEST non-empty length bucket makes actual
+    adherence achievable, not just theoretically fed in -- grounded directly in
+    _apply_motif_bias's own prefix-matching logic, not guessed. None if the
+    counter is empty."""
+    for length in (2, 3, 4):
+        candidates = {motif: weight for motif, weight in counter.items() if len(motif) == length}
+        if candidates:
+            return max(candidates, key=candidates.get)
+    return None
+
+
 def sax_generator(
     register: Tuple[int, int],
     target_voice_id: str,
@@ -231,6 +251,7 @@ def sax_generator(
     plan_bars: int = DEFAULT_PLAN_BARS,
     memory: Optional[RehearsalMemory] = None,
     n_candidates: int = 1,
+    motif_recall_candidates: Optional[int] = None,
     model_path: Optional[str] = None,
     seed: Optional[int] = None,
 ) -> Generator:
@@ -240,7 +261,9 @@ def sax_generator(
     per call from an internal buffer.
 
     memory, if given, is consulted and updated every time a new plan chunk is
-    built: the most common motif recalled from it (if any) becomes that chunk's
+    built: the most-common ACHIEVABLE motif recalled from it (if any —
+    _pick_achievable_motif above, preferring the shortest recalled motif, not
+    simply the single most-common one of any length) becomes that chunk's
     motif_targets, and the chunk's own generated notes are then stored into it —
     so passing the *same* RehearsalMemory into a later Session/sax_generator call
     lets that later run draw on this one's material (DESIGN.md §12, Phase 11).
@@ -248,9 +271,28 @@ def sax_generator(
 
     n_candidates, if greater than 1, generates that many candidates per chunk
     (identical arguments each call) and keeps the one scoring highest by
-    musicality_score(...).overall — DESIGN.md §13's "chess" search-and-evaluate
-    idea, Phase 14. Defaults to 1: exactly one generate() call per chunk, exactly
-    today's behaviour, unchanged.
+    (motif_adherence, musicality_score.overall), lexicographically — DESIGN.md
+    §13's "chess" search-and-evaluate idea, Phase 14, extended in Phase 17 so a
+    chunk with a real motif to aim for actually prefers a candidate that used
+    it, not just the generically highest-scoring one. When motif_targets is
+    empty, motif_adherence is 0.0 for every candidate, so this is provably
+    identical to Phase 14's overall-only comparison. Defaults to 1: exactly one
+    generate() call per chunk, exactly today's behaviour, unchanged.
+
+    motif_recall_candidates, if given, overrides n_candidates specifically for
+    a chunk that has a non-empty motif_targets — more search shots make it far
+    more likely at least one candidate actually lands the motif, justified by
+    Phase 14's own measurement (~164ms for 20 candidates over a full 4-bar
+    chunk on CPU). Checked empirically, not assumed to be rare: within-run
+    persistence (Phase 11) means recall_motifs() returns something as soon as
+    ANY earlier chunk in the same run has stored 2+ real notes — true for
+    nearly every chunk after the first, not just an occasional cross-loop
+    moment — so this applies broadly within a run, not to a rare one-off. The
+    absolute cost stays fine for a real performance either way (Phase 14's
+    per-chunk number, paid once per chunk during machine_speed generation,
+    before playback starts), it's simply not the narrow "rare chunk" case
+    first assumed. Defaults to None, reproducing n_candidates for every chunk
+    exactly as before this parameter existed.
 
     The PhraseGenerator (and its ~3.5MB model weights) is constructed once here,
     not per bar or per plan — reused across the whole session for efficiency.
@@ -299,14 +341,17 @@ def sax_generator(
 
             motif_targets = []
             if memory is not None:
-                common = memory.recall_motifs().most_common(1)
-                if common:
-                    motif_targets = [common[0][0]]
+                picked = _pick_achievable_motif(memory.recall_motifs())
+                if picked is not None:
+                    motif_targets = [picked]
+
+            candidates_this_chunk = (motif_recall_candidates or n_candidates) if motif_targets else n_candidates
 
             best_notes = None
             best_score = None
+            best_key = None
             candidate_scores = []
-            for _ in range(n_candidates):
+            for _ in range(candidates_this_chunk):
                 candidate_notes = phrase_gen.generate(
                     seed_phrase,
                     chord_idx=chord_idx,
@@ -317,10 +362,16 @@ def sax_generator(
                 )
                 candidate_score = musicality_score(candidate_notes, chord_idx, seed_phrase, weights=critic_weights)
                 candidate_scores.append(candidate_score.overall)
-                if best_score is None or candidate_score.overall > best_score.overall:
-                    best_notes, best_score = candidate_notes, candidate_score
+                # (adherence, overall) lexicographic key: when motif_targets is
+                # empty, adherence is 0.0 for every candidate, so this is
+                # provably identical to comparing candidate_score.overall alone
+                # (Phase 14's behaviour) -- see module docstring.
+                key = (motif_adherence(candidate_notes, motif_targets), candidate_score.overall)
+                if best_key is None or key > best_key:
+                    best_notes, best_score, best_key = candidate_notes, candidate_score, key
             notes = best_notes
             generate.last_candidate_scores = candidate_scores
+            generate.motif_adherence_log.append(best_key[0])
 
             if memory is not None:
                 memory.store(notes, score=best_score.overall)
@@ -330,4 +381,5 @@ def sax_generator(
 
     generate.critic_weights = critic_weights  # exposed for testing -- see module docstring
     generate.last_candidate_scores = []  # populated on the first chunk-build; exposed for testing
+    generate.motif_adherence_log = []  # one entry per chunk-build, the WINNING candidate's motif_adherence
     return generate

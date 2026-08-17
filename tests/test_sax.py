@@ -2,12 +2,15 @@
 real-inference behaviour (PhraseGenerator.generate, sax_generator end-to-end) is
 in tests/test_sax_wolfson_integration.py, which needs the real weights."""
 
+from collections import Counter
+
 from song import Changes, ChangesEvent, Section, Song
 from song.chord import Chord, _QUALITY_ALIASES
 
 from ensemble.sax import (
     _bars_until_chord_change,
     _build_seed_phrase,
+    _pick_achievable_motif,
     _split_phrase_into_bars,
     chord_to_wolfson_index,
 )
@@ -158,3 +161,33 @@ def test_split_phrase_into_bars_splits_a_note_crossing_a_boundary_into_fragments
         (62, 4.0, 2.0),  # the remainder of the same note, continuing in bar 1
         (65, 6.0, 1.0),
     ]
+
+
+# ---------------------------------------------------------------------------
+# _pick_achievable_motif -- prefers the shortest (most achievable) recalled
+# motif over simply the single most-common one of any length
+# ---------------------------------------------------------------------------
+
+
+def test_pick_achievable_motif_prefers_shorter_even_if_less_common():
+    counter = Counter({(2, -1, 5, 3): 10.0, (2, 2): 1.0})  # 4-interval vs 2-interval
+    assert _pick_achievable_motif(counter) == (2, 2)
+
+
+def test_pick_achievable_motif_falls_back_to_three_interval_bucket():
+    counter = Counter({(2, -1, 5, 3): 5.0, (1, -2, 4): 2.0})  # no 2-interval motifs at all
+    assert _pick_achievable_motif(counter) == (1, -2, 4)
+
+
+def test_pick_achievable_motif_falls_back_to_four_interval_bucket():
+    counter = Counter({(2, -1, 5, 3): 5.0})  # only a 4-interval motif present
+    assert _pick_achievable_motif(counter) == (2, -1, 5, 3)
+
+
+def test_pick_achievable_motif_picks_the_highest_weighted_within_the_shortest_bucket():
+    counter = Counter({(2, 2): 1.0, (3, -1): 4.0})  # both 2-interval -- higher weight wins
+    assert _pick_achievable_motif(counter) == (3, -1)
+
+
+def test_pick_achievable_motif_empty_counter_is_none():
+    assert _pick_achievable_motif(Counter()) is None

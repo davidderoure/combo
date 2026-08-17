@@ -218,12 +218,18 @@ than inventing a second pacing abstraction — the same mechanism `test_session.
 already uses to verify real-time pacing without actually waiting, applied here to
 verify playback scheduling the same way. `self_test.py` (new, top-level, sibling to
 `listen.py`) is the first thing that generalises Wolfson's AI-vs-AI self-play to
-combo's whole ensemble: bass (`chord_tone_generator`, honestly labelled as a stand-in
-— real bass generation isn't built), sax (real generation, skipped with a clear
+combo's whole ensemble: bass, sax (real generation, skipped with a clear
 message if `sax_best.pt` isn't present), two role-split comping voices (Phase 15,
 now audible rather than only measured), and drums — generated once, then played
 through a real MIDI output port. `--loop N` plays the chart N times sharing one
 `RehearsalMemory`, making Phase 11's rehearsal idea audible rather than only tested.
+**Updated in Phase 17**: heard for real (through Logic Pro, not assumed), the
+original bass stand-in — `chord_tone_generator`'s simultaneous root+fifth
+double-stop, only on beats 1 and 3 with a full beat of silence after each hit —
+sounded thuddy and staccato, the double-stop and the gaps, not the sample or note
+duration alone. `self_test.py` now has its own `walking_bass_stub`: a single note
+per beat, alternating root/fifth, sustained for nearly the full beat — local to
+this script, the shared/tested `chord_tone_generator` untouched.
 
 Sax also plans several bars ahead now (Phase 10), prompted by David asking directly
 whether bar-by-bar generation loses a soloist's "conscious planning." What planning
@@ -307,6 +313,33 @@ Deliberately still deferred, same scope-cut discipline as every earlier phase: a
 contrast, ...) stay at their defaults; hidden-state continuity still resets
 *between* planned chunks.
 
+**The rehearsal effect is now real, not just wired** (Phase 17). A controlled A/B
+test (`rehearsal_ab_test.py`, kept as a reusable tool rather than a throwaway
+script) comparing one `RehearsalMemory` shared across `--loop` iterations against a
+fresh one every loop found a genuine null result at first: no measurable
+difference in `repetition`. Traced to two real causes, both fixed rather than
+re-measured harder — `repetition()` checks whether a chunk repeats a pattern
+*within itself*, with no reference to what memory actually recalled, so a chunk
+that used the recalled motif exactly once (without repeating it again in that
+same short chunk) scored `0.0` regardless; and `_apply_motif_bias`
+(`phrase_generator.py`) only nudges the next token once the model has already
+spontaneously started matching the target's prefix by chance, rare for a long
+motif. Fixed entirely in combo-authored code, the ported model untouched: a new
+`motif_adherence` metric (does a candidate's own output actually contain the
+recalled target?, distinct from `repetition`'s self-similarity), a new
+`_pick_achievable_motif` helper that prefers the shortest recalled motif —
+grounded directly in `_apply_motif_bias`'s own prefix-matching logic, which needs
+far fewer prior notes to coincide for a short motif than a long one — and
+selection now uses `(motif_adherence, overall)` lexicographically (provably
+identical to Phase 14's overall-only comparison when nothing's recalled). A new
+`motif_recall_candidates` parameter spends extra search specifically on chunks
+with a real target. Rerunning the A/B test afterward found a clean,
+construction-clear effect exactly where it should live: the first plan-chunk of
+every loop after loop 0 — the one place cross-loop persistence specifically
+acts — scores `motif_adherence` 1.0 for the persistent condition and 0.0 for a
+fresh-memory control, every time. `self_test.py` now prints a plain marker
+("echoed a motif from an earlier rehearsal") whenever this fires.
+
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
 in Phase 5 (every phase since had repeated some version of "a director-emitted
@@ -389,12 +422,15 @@ suite is no longer sub-second once torch is imported.
   (DESIGN.md §8 — `TransitionController`, `GestureSource`, `scripted_gesture_source`,
   `LiveGestureQueue`), `sax.py` (DESIGN.md §12 — real generation for the sax voice:
   `chord_to_wolfson_index`, `sax_generator`, `_bars_until_chord_change` +
-  `_split_phrase_into_bars` for the multi-bar planning buffer), `memory.py`
+  `_split_phrase_into_bars` for the multi-bar planning buffer, `_pick_achievable_motif`
+  for choosing a recalled motif that's actually reachable, Phase 17), `memory.py`
   (DESIGN.md §12 — `RehearsalMemory`, the first state that persists across separate
   `Session.generate()` calls), `critic.py` (DESIGN.md §11/§12 — a musicality
-  critic: `tonal_conformity`, `contour_smoothness`, `repetition`,
-  `call_response_relatedness`, `singability`, `musicality_score`; every function
-  pure and deterministic, no model inference), `roles.py` (DESIGN.md §2 — the
+  critic: `tonal_conformity`, `contour_smoothness`, `repetition`, `motif_adherence`
+  (Phase 17 — distinct from `repetition`, measures adherence to an externally
+  recalled target rather than self-similarity), `call_response_relatedness`,
+  `singability`, `musicality_score`; every function pure and deterministic, no
+  model inference), `roles.py` (DESIGN.md §2 — the
   same-instrument-doubling slice of role assignment: `default_accompanist_roles`,
   a greedy register-overlap rule; consumed by `comping_generator`'s `lay_out`
   parameter).
@@ -431,6 +467,11 @@ suite is no longer sub-second once torch is imported.
 - `self_test.py` — small runnable script: builds the full AI-only ensemble over a
   chart and plays it through a real MIDI output port — see the three-step testing
   plan below (`python self_test.py`)
+- `rehearsal_ab_test.py` — small runnable analysis script (no MIDI/audio): a
+  controlled A/B comparison of `RehearsalMemory` shared across `--loop` iterations
+  vs. a fresh one every loop, measuring `motif_adherence` and `repetition`
+  directly rather than by ear — see Phase 17's rehearsal-memory paragraph above
+  for what it found (`python rehearsal_ab_test.py`)
 
 ## Running
 
@@ -454,8 +495,10 @@ Driver into GarageBand or a simple synth — `python self_test.py --list-out` to
 the right port index, `--out N` to select it). This is combo's own version of
 wolfson's AI-vs-AI self-play, generalised from one bass+sax pair to the whole
 ensemble. `--loop 3` plays the chart three times, sharing one `RehearsalMemory`
-across the loop — David's rehearsal idea (DESIGN.md, Phase 11), now something to
-actually listen for rather than only a test assertion.
+across the loop — David's rehearsal idea (DESIGN.md, Phase 11). As of Phase 17
+this is a reliable, measured effect, not just a hopeful one: watch the console
+for `-> sax echoed a motif from an earlier rehearsal`, printed whenever a loop's
+first phrase actually reuses something from an earlier one.
 
 **2. Tomorrow, MIDI input hardware, recognition only** — `python listen.py` (already
 built, no new code) prints recognised gestures and live intensity as you play, a

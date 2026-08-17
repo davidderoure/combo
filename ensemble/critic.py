@@ -171,6 +171,27 @@ def repetition(notes: list) -> float:
     return max(exact, near)
 
 
+def motif_adherence(notes: list, motif_targets: list) -> float:
+    """1.0 if any of motif_targets appears among this phrase's OWN interval
+    n-grams (extract_interval_motifs), else 0.0. Deliberately distinct from
+    repetition() above: that measures whether a phrase repeats a pattern WITHIN
+    ITSELF; this measures whether it echoes a SPECIFIC externally-supplied
+    target (ensemble/memory.py's RehearsalMemory recall) -- a phrase that uses
+    the target motif exactly once, without also repeating it again inside this
+    same short chunk, scores 0.0 on repetition() but should score 1.0 here.
+    Not part of MusicalityScore/DEFAULT_WEIGHTS below -- used only for
+    candidate selection when a chunk actually has a target to aim for
+    (ensemble/sax.py), not as a general-purpose quality signal. Empty
+    motif_targets (nothing recalled) -> 0.0."""
+    if not motif_targets:
+        return 0.0
+    real = _real_notes(notes)
+    if len(real) < 2:
+        return 0.0
+    phrase_motifs = set(extract_interval_motifs(real))
+    return 1.0 if any(target in phrase_motifs for target in motif_targets) else 0.0
+
+
 def call_response_relatedness(seed_phrase: list, response_notes: list) -> float:
     """U/D/S contour-string similarity between what the target voice played
     (the seed) and the phrase generated in response -- did the response relate

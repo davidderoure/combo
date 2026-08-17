@@ -90,7 +90,12 @@ def walking_bass_stub(register: Tuple[int, int]) -> Generator:
     return generate
 
 
-def build_voices(memory: RehearsalMemory) -> list:
+def build_voices(memory: RehearsalMemory):
+    """Returns (voices, sax_gen) -- sax_gen is the bare generator closure behind
+    the sax Voice (or None if sax_best.pt isn't present), kept separately so
+    main() can read its motif_adherence_log after each loop (Phase 17) the same
+    way tests reach into a generator's exposed state -- Voice itself doesn't
+    expose anything beyond the closure it wraps."""
     bass = Voice(
         id="bass",
         instrument="bass (walking-bass stub -- real bass generation isn't built yet)",
@@ -101,16 +106,19 @@ def build_voices(memory: RehearsalMemory) -> list:
     voices = [bass]
 
     has_sax = SAX_WEIGHTS_PATH.exists()
+    sax_gen = None
     if has_sax:
-        voices.append(
-            Voice(
-                id="sax",
-                instrument="sax",
-                register=SAX_REGISTER,
-                source="ai",
-                generator=sax_generator(SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=3),
-            )
+        # motif_recall_candidates=20: fires on most chunks after the first once
+        # memory has anything stored (within-run persistence, Phase 11), not
+        # just a rare one-off -- but even paid on nearly every chunk the
+        # absolute cost stays fine (Phase 14: ~164ms/chunk for 20 candidates),
+        # since it's all spent up front during machine_speed generation before
+        # playback starts. Makes the "hear it echo an earlier rehearsal" effect
+        # reliable enough to demo, not just theoretically possible.
+        sax_gen = sax_generator(
+            SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=3, motif_recall_candidates=20
         )
+        voices.append(Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen))
     else:
         print(
             "sax_best.pt not found -- sax voice skipped (see README). Copy it into "
@@ -142,7 +150,7 @@ def build_voices(memory: RehearsalMemory) -> list:
     voices.append(
         Voice(id="drums", instrument="drums", register=DRUM_REGISTER, source="ai", generator=drum_generator(seed=4))
     )
-    return voices
+    return voices, sax_gen
 
 
 def main() -> None:
@@ -164,13 +172,15 @@ def main() -> None:
     for i in range(args.loop):
         label = f" (rehearsal {i + 1}/{args.loop})" if args.loop > 1 else ""
         print(f"\nGenerating{label}...")
-        voices = build_voices(memory)
+        voices, sax_gen = build_voices(memory)
         session = Session(song=song, voices=voices)
         timeline = session.generate(mode=MACHINE_SPEED)
         print(
             f"Playing {len(timeline)} notes over {song.total_beats:.0f} beats "
             f"at {song.tempo_bpm:.0f} bpm{label} (Ctrl-C to stop)..."
         )
+        if sax_gen is not None and any(a > 0 for a in sax_gen.motif_adherence_log):
+            print("  -> sax echoed a motif from an earlier rehearsal")
         try:
             play_timeline(timeline, song.tempo_bpm, CHANNELS, args.out)
         except KeyboardInterrupt:

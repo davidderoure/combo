@@ -12,6 +12,7 @@ from ensemble.critic import (
     _levenshtein,
     call_response_relatedness,
     contour_smoothness,
+    motif_adherence,
     musicality_score,
     repetition,
     singability,
@@ -116,6 +117,47 @@ def test_repetition_detects_near_repeat_via_contour_edit_distance():
     assert _contour_string(pitches) == "UDUSUUDUU"
     notes = notes_from_pitches(pitches)
     assert repetition(notes) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# motif_adherence -- distinct from repetition() above: adherence to an
+# EXTERNAL target, not internal self-similarity
+# ---------------------------------------------------------------------------
+
+
+def test_motif_adherence_empty_targets_is_zero():
+    notes = notes_from_pitches([60, 62, 64, 60, 62, 64])
+    assert motif_adherence(notes, []) == 0.0
+
+
+def test_motif_adherence_phrase_containing_target_scores_one():
+    # intervals [2, 2] -- the phrase's own 2-gram is (2, 2), matching the target.
+    notes = notes_from_pitches([60, 62, 64])
+    assert motif_adherence(notes, [(2, 2)]) == 1.0
+
+
+def test_motif_adherence_phrase_using_target_only_once_still_scores_one():
+    """The exact case repetition() misses: the target motif appears exactly
+    once (no internal recurrence needed) -- repetition() would score this 0.0
+    since (2, 2) never recurs, but motif_adherence should score it 1.0 since
+    it's checking against an external target, not self-repetition."""
+    notes = notes_from_pitches([60, 62, 64, 70, 75])  # intervals [2, 2, 6, 5]
+    assert repetition(notes) == 0.0
+    assert motif_adherence(notes, [(2, 2)]) == 1.0
+
+
+def test_motif_adherence_phrase_not_containing_target_scores_zero():
+    notes = notes_from_pitches([60, 61, 63, 66, 70])  # intervals 1, 2, 3, 4
+    assert motif_adherence(notes, [(2, 2)]) == 0.0
+
+
+def test_motif_adherence_matches_any_one_of_multiple_targets():
+    notes = notes_from_pitches([60, 62, 64])  # intervals [2, 2]
+    assert motif_adherence(notes, [(9, 9), (2, 2), (5, -5)]) == 1.0
+
+
+def test_motif_adherence_fewer_than_two_notes_is_zero():
+    assert motif_adherence(notes_from_pitches([60]), [(2, 2)]) == 0.0
 
 
 # ---------------------------------------------------------------------------
