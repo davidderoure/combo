@@ -10,8 +10,10 @@ from ensemble.critic import (
     DEFAULT_WEIGHTS,
     _contour_string,
     _levenshtein,
+    _semitones_to_scale,
     call_response_relatedness,
     contour_smoothness,
+    dissonance,
     motif_adherence,
     musicality_score,
     repetition,
@@ -65,6 +67,49 @@ def test_tonal_conformity_scores_out_of_key_non_resolving_phrase_zero():
 
 def test_tonal_conformity_no_real_notes_is_zero():
     assert tonal_conformity([{"pitch": REST_PITCH, "duration_beats": 1.0}], C_MAJOR) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# dissonance -- higher is WORSE, unlike every other function here. A badness
+# signal for ensemble/sax.py's selection to minimise, not a goodness signal
+# blended into MusicalityScore/DEFAULT_WEIGHTS.
+# ---------------------------------------------------------------------------
+
+
+def test_semitones_to_scale_computes_shortest_wrap_around_distance():
+    # A synthetic wide-gap scale (not one any real chord_to_mode reaches) --
+    # proves the underlying distance math directly, independent of whether
+    # combo's actual modes ever produce a gap this wide (they don't: ionian/
+    # mixolydian/dorian/diminished, the only 4 chord_to_mode reaches, all
+    # have a max gap of 2 semitones, so every out-of-scale note in real use
+    # is always exactly 1 semitone away -- see dissonance()'s own docstring).
+    scale = frozenset({0, 5})
+    assert _semitones_to_scale(0, scale) == 0
+    assert _semitones_to_scale(1, scale) == 1  # 1 semitone from 0
+    assert _semitones_to_scale(3, scale) == 2  # 2 from 5, 3 from 0 -- shorter side wins
+    assert _semitones_to_scale(11, scale) == 1  # wraps: 1 semitone from 0
+
+
+def test_dissonance_no_real_notes_is_zero():
+    assert dissonance([{"pitch": REST_PITCH, "duration_beats": 1.0}], C_MAJOR) == 0.0
+
+
+def test_dissonance_all_in_scale_is_zero():
+    notes = notes_from_pitches([60, 62, 64])  # C, D, E -- all in C-ionian
+    assert dissonance(notes, C_MAJOR) == 0.0
+
+
+def test_dissonance_semitone_clash_counts_as_dissonant():
+    # C#4 (pc 1) is 1 semitone from both C (0) and D (2) -- the "minor 9th"
+    # clash David flagged as the worst case in ordinary melodic playing.
+    notes = notes_from_pitches([61])
+    assert dissonance(notes, C_MAJOR) == 1.0
+
+
+def test_dissonance_is_the_fraction_of_clashing_notes():
+    # C (in scale), C# (clash), D (in scale), D# (clash) -- 2 of 4 clash.
+    notes = notes_from_pitches([60, 61, 62, 63])
+    assert dissonance(notes, C_MAJOR) == 0.5
 
 
 # ---------------------------------------------------------------------------

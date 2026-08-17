@@ -108,15 +108,16 @@ def build_voices(memory: RehearsalMemory):
     has_sax = SAX_WEIGHTS_PATH.exists()
     sax_gen = None
     if has_sax:
-        # motif_recall_candidates=20: fires on most chunks after the first once
-        # memory has anything stored (within-run persistence, Phase 11), not
-        # just a rare one-off -- but even paid on nearly every chunk the
-        # absolute cost stays fine (Phase 14: ~164ms/chunk for 20 candidates),
-        # since it's all spent up front during machine_speed generation before
-        # playback starts. Makes the "hear it echo an earlier rehearsal" effect
-        # reliable enough to demo, not just theoretically possible.
+        # n_candidates=8 (up from 3): dissonance-avoidance (Phase 18) is only as
+        # good as what it has to choose among -- more candidates raise the odds
+        # a truly clash-free one exists in the batch. motif_recall_candidates=20
+        # fires on most chunks after the first once memory has anything stored
+        # (within-run persistence, Phase 11), not just a rare one-off -- but even
+        # paid on nearly every chunk the absolute cost stays fine (Phase 14:
+        # ~164ms/chunk for 20 candidates), since it's all spent up front during
+        # machine_speed generation before playback starts.
         sax_gen = sax_generator(
-            SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=3, motif_recall_candidates=20
+            SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=8, motif_recall_candidates=20
         )
         voices.append(Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen))
     else:

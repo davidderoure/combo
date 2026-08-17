@@ -230,6 +230,11 @@ sounded thuddy and staccato, the double-stop and the gaps, not the sample or not
 duration alone. `self_test.py` now has its own `walking_bass_stub`: a single note
 per beat, alternating root/fifth, sustained for nearly the full beat — local to
 this script, the shared/tested `chord_tone_generator` untouched.
+**Updated in Phase 18**: a real stuck note during testing traced to
+`play_timeline`'s cleanup only ever sending CC 123/120 (All Notes Off/All Sound
+Off) — wolfson's own `output/midi_output.py` already documented that Logic's
+software instruments ignore both and need an explicit `note_off` per pitch;
+the same fix is now reused here rather than rediscovered from scratch.
 
 Sax also plans several bars ahead now (Phase 10), prompted by David asking directly
 whether bar-by-bar generation loses a soloist's "conscious planning." What planning
@@ -340,6 +345,26 @@ acts — scores `motif_adherence` 1.0 for the persistent condition and 0.0 for a
 fresh-memory control, every time. `self_test.py` now prints a plain marker
 ("echoed a motif from an earlier rehearsal") whenever this fires.
 
+**Dissonant notes are now actively avoided, not just tolerated** (Phase 18).
+David's own reaction after listening for real: "even non-expert audiences can
+hear when something is dissonant... the one semitone delta is as bad as it
+gets in melodic playing, the dreaded minor 9th." A new `out_of_key_check.py`
+(kept as a reusable tool, same lifecycle as `rehearsal_ab_test.py`) found
+~16-22% of sax notes out of key, and — checked, not assumed — every single one
+landed exactly 1 semitone from the scale, never further. `ensemble/critic.py`'s
+new `dissonance` metric targets exactly that 1-semitone relationship
+specifically (a note further from the scale isn't counted at all — landing
+further out reads as deliberately "outside," David's own judgment, not a
+clash); `ensemble/sax.py`'s selection now checks it FIRST, ahead of
+`motif_adherence` and general quality — his framing: "we could have all sorts
+of statistical measures of what's good, but what's bad matters a lot," so
+dissonance is a gate candidates must clear, not one more positively-weighted
+ingredient diluted into `overall`. `self_test.py`'s `n_candidates` went from 3
+to 8 to give that gate real candidates to actually choose among. Result,
+reproduced across two separate 5-loop runs: 2.1% out of key (31/1505, then
+32/1525) — down from ~16-22%, an ~8-10x reduction, not zero (a batch can still
+come up all-clashing, just increasingly rarely as `n_candidates` grows).
+
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
 in Phase 5 (every phase since had repeated some version of "a director-emitted
@@ -428,7 +453,9 @@ suite is no longer sub-second once torch is imported.
   `Session.generate()` calls), `critic.py` (DESIGN.md §11/§12 — a musicality
   critic: `tonal_conformity`, `contour_smoothness`, `repetition`, `motif_adherence`
   (Phase 17 — distinct from `repetition`, measures adherence to an externally
-  recalled target rather than self-similarity), `call_response_relatedness`,
+  recalled target rather than self-similarity), `dissonance` (Phase 18 — higher is
+  WORSE, unlike every other function here; a badness signal for selection to
+  minimise, not a goodness signal blended into `overall`), `call_response_relatedness`,
   `singability`, `musicality_score`; every function pure and deterministic, no
   model inference), `roles.py` (DESIGN.md §2 — the
   same-instrument-doubling slice of role assignment: `default_accompanist_roles`,
@@ -472,6 +499,11 @@ suite is no longer sub-second once torch is imported.
   vs. a fresh one every loop, measuring `motif_adherence` and `repetition`
   directly rather than by ear — see Phase 17's rehearsal-memory paragraph above
   for what it found (`python rehearsal_ab_test.py`)
+- `out_of_key_check.py` — small runnable analysis script (no MIDI/audio): counts
+  how many of the sax's generated notes actually land out of key against the
+  active chord's scale, at `self_test.py`'s real settings — see Phase 18's
+  dissonance-avoidance paragraph above for what it found
+  (`python out_of_key_check.py`)
 
 ## Running
 

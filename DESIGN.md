@@ -196,7 +196,30 @@ motif_adherence 1.0 for the persistent condition, 0.0 for a fresh-memory
 control, every single time. Whole-run averages are close between conditions
 (~1.00 vs ~0.95-0.98), a real, honest side-effect of the same fix rather than
 a confound: the mechanism is now reliably audible throughout a run, not only
-at rehearsal boundaries. All with passing tests.
+at rehearsal boundaries. Real listening also turned up a stuck note and
+dissonance David flagged directly ("even non-expert audiences can hear when
+something is dissonant... the one semitone delta is as bad as it gets in
+melodic playing, the dreaded minor 9th") — both fixed (Phase 18). The stuck
+note: `output/midi_output.py`'s cleanup only sent CC 123/120 (All Notes
+Off/All Sound Off); wolfson's own `output/midi_output.py` already documented
+that Logic's software instruments ignore both and need an explicit note_off
+per pitch — the same fix, reused, not rediscovered. The dissonance: a new
+`out_of_key_check.py` (kept as a reusable tool, same lifecycle as
+`rehearsal_ab_test.py`) found ~16-22% of sax notes out of key, and — checked,
+not assumed — every single one landed exactly 1 semitone from the scale, the
+"minor 9th" clash relationship David named as the worst case, never further
+away. `ensemble/critic.py`'s new `dissonance` metric targets exactly that
+1-semitone case specifically (a note further from the scale isn't counted —
+David's judgment that being "more outside" reads as deliberate, not a clash);
+`ensemble/sax.py`'s candidate selection now checks it FIRST, ahead of
+motif_adherence and general quality — "what's bad matters a lot," a gate
+rather than one more positively-weighted ingredient in `overall`'s blend.
+`self_test.py`'s `n_candidates` raised 3→8 to give that gate real candidates
+to choose among. Result, reproduced across two separate 5-loop runs: 2.1% out
+of key (31/1505, then 32/1525), down from ~16-22% — not zero (the model can
+still generate an all-clashing batch, just increasingly rarely as
+`n_candidates` grows), but a real, repeatable, ~8-10x reduction. All with
+passing tests.
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a

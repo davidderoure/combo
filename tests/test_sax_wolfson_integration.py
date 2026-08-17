@@ -382,8 +382,12 @@ def test_search_with_a_motif_target_prefers_higher_adherence_over_higher_overall
     scores for every candidate, confirm the winner is the one with the highest
     adherence among all candidates generated that chunk (and, among ties on
     adherence, the highest overall). Holds regardless of how much real
-    stochastic variety this particular run happens to produce."""
-    from ensemble.critic import motif_adherence, musicality_score
+    stochastic variety this particular run happens to produce. Phase 18 added
+    a third, leading key term (dissonance, negated so lower is preferred) --
+    this test recomputes the full 3-tuple, not just the Phase 17 2-tuple, so
+    it still verifies the ACTUAL selection sax_generator performs rather than
+    a stale approximation of it."""
+    from ensemble.critic import dissonance, motif_adherence, musicality_score
 
     original = wolfson_phrase_generator.PhraseGenerator.generate
     candidates = []  # (seed_phrase, kwargs, notes) per call
@@ -416,10 +420,14 @@ def test_search_with_a_motif_target_prefers_higher_adherence_over_higher_overall
     assert motif_targets != []  # the scenario this test is actually about
 
     recomputed = [
-        (motif_adherence(notes, motif_targets), musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall)
+        (
+            -dissonance(notes, kwargs["chord_idx"]),
+            motif_adherence(notes, motif_targets),
+            musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall,
+        )
         for seed_phrase, kwargs, notes in last_chunk
     ]
-    assert [overall for _adherence, overall in recomputed] == sax_gen.last_candidate_scores
+    assert [overall for _dis, _adherence, overall in recomputed] == sax_gen.last_candidate_scores
 
     best_key = max(recomputed)
     winner_notes = last_chunk[recomputed.index(best_key)][2]
@@ -430,7 +438,8 @@ def test_search_with_a_motif_target_prefers_higher_adherence_over_higher_overall
         if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
     )
     assert set(dispensed_pitches).issubset(set(winner_pitches))
-    assert sax_gen.motif_adherence_log[-1] == best_key[0]
+    assert sax_gen.dissonance_log[-1] == -best_key[0]
+    assert sax_gen.motif_adherence_log[-1] == best_key[1]
 
 
 def test_motif_recall_candidates_overrides_n_candidates_only_on_recall_chunks():
@@ -464,3 +473,50 @@ def test_motif_recall_candidates_unset_reproduces_n_candidates_for_every_chunk()
     with spying_on_phrase_generator_calls() as calls:
         make_slow_session(memory=mem, seed=3, n_candidates=2).generate()
     assert len(calls) == 4  # 2 chunks * 2 candidates each -- motif_recall_candidates never overrides
+
+
+def test_search_prefers_lower_dissonance_even_without_a_motif_target():
+    """Phase 18: dissonance-avoidance applies to every chunk, not just ones
+    with a recalled motif -- no memory here at all. Real inference,
+    independently recompute dissonance for every candidate, confirm the
+    winner has the LOWEST dissonance among that chunk's candidates (ties
+    broken by overall, matching the real selection key)."""
+    from ensemble.critic import dissonance, musicality_score
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert len(candidates) == 16  # 2 chunks * 8 candidates, no motif_recall_candidates involved
+    last_chunk = candidates[-8:]
+
+    recomputed = [
+        (-dissonance(notes, kwargs["chord_idx"]), musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall)
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
+    best_key = max(recomputed)
+    winner_notes = last_chunk[recomputed.index(best_key)][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+    second_chunk_start = 4 * BEATS_PER_BAR
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+    assert sax_gen.dissonance_log[-1] == -best_key[0]
+    # The winner's dissonance is never worse than any candidate's -- the
+    # concrete "what's bad matters" proof, not just "some candidate was picked".
+    assert sax_gen.dissonance_log[-1] == min(-k[0] for k in recomputed)

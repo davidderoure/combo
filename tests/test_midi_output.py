@@ -128,3 +128,17 @@ def test_play_timeline_sends_all_notes_off_even_when_interrupted():
 
     cc_messages = [m for m in fake_out.sent if m[0] & 0xF0 == 0xB0]
     assert len(cc_messages) == 2  # All-Notes-Off + All-Sound-Off still sent on channel 1
+
+
+def test_play_timeline_sends_explicit_note_off_for_every_pitch_during_cleanup():
+    """Some synths (Logic's software instruments, per Wolfson's own
+    output/midi_output.py -- confirmed again by a real stuck note during
+    testing) ignore CC 123/120 entirely and need an explicit note_off per
+    pitch to guarantee nothing is left sounding."""
+    tl = Timeline([NoteEvent("sax", 60, 80, start_beat=0.0, duration_beats=1.0)])
+    fake_out = FakeMidiOut()
+    play_timeline(tl, tempo_bpm=120.0, channels={"sax": 1}, port_index=0, midi_out=fake_out, clock=FakeClock())
+
+    note_offs = [m for m in fake_out.sent if m[0] & 0xF0 == NOTE_OFF and m[0] & 0x0F == 0]
+    pitches_turned_off = {m[1] for m in note_offs}
+    assert pitches_turned_off == set(range(128))

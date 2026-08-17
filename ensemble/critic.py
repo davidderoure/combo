@@ -58,6 +58,13 @@ SMOOTH_INTERVAL_MAX_SEMITONES = 4  # placeholder -- Grade 1 piano's own norms ar
                                     # reference; needs real jazz-appropriate tuning.
 NEAR_REPEAT_WINDOW = 4         # contour-string window length for near-repeat comparison
 NEAR_REPEAT_MAX_DISTANCE = 1   # placeholder: windows within this edit distance count as near-repeats
+DISSONANT_SEMITONE_DISTANCE = 1  # a note exactly this far from the nearest in-scale pitch
+                                   # class -- the "minor 9th"/major-7th-clash relationship,
+                                   # judged as the harshest dissonance in ordinary melodic
+                                   # playing, worse than landing further outside the scale
+                                   # (read as deliberately "outside" rather than a clash) --
+                                   # David's own musical judgment, not derived from anything
+                                   # else in this codebase.
 
 DEFAULT_WEIGHTS = {
     "tonal_conformity": 0.25,
@@ -125,6 +132,40 @@ def tonal_conformity(notes: list, chord_idx: int) -> float:
     resolves = 1.0 if (tones and real[-1]["pitch"] % 12 in tones) else 0.0
 
     return (1.0 - TONAL_RESOLUTION_WEIGHT) * scale_fraction + TONAL_RESOLUTION_WEIGHT * resolves
+
+
+def _semitones_to_scale(pitch_class: int, scale: frozenset) -> int:
+    """Shortest distance (0-6) from pitch_class to the nearest pitch class in
+    scale, wrapping mod 12 in whichever direction is shorter."""
+    return min((pitch_class - s) % 12 if (pitch_class - s) % 12 <= 6 else 12 - (pitch_class - s) % 12 for s in scale)
+
+
+def dissonance(notes: list, chord_idx: int) -> float:
+    """Fraction of real notes that CLASH with the chord: pitch class out of
+    scale and exactly DISSONANT_SEMITONE_DISTANCE semitones from the nearest
+    in-scale pitch class -- found empirically, not assumed, by checking real
+    generated output directly: every out-of-key note self_test.py produced
+    landed exactly 1 semitone from the scale, never further. Deliberately
+    distinct from tonal_conformity's plain in/out-of-scale fraction: a note
+    further than DISSONANT_SEMITONE_DISTANCE from the scale isn't counted
+    here at all (reads as deliberately "outside" rather than a clash, David's
+    own judgment -- being further from the scale is not treated as worse).
+    Higher is worse, unlike every other function in this module -- this is a
+    badness signal for selection to minimise (ensemble/sax.py), not a
+    goodness signal to blend into MusicalityScore/DEFAULT_WEIGHTS below,
+    matching how motif_adherence is also kept separate. No real notes -> 0.0
+    (nothing to clash)."""
+    real = _real_notes(notes)
+    if not real:
+        return 0.0
+    scale = scale_pitch_classes(chord_root(chord_idx), chord_to_mode(chord_idx))
+    clashes = sum(
+        1
+        for n in real
+        if n["pitch"] % 12 not in scale
+        and _semitones_to_scale(n["pitch"] % 12, scale) == DISSONANT_SEMITONE_DISTANCE
+    )
+    return clashes / len(real)
 
 
 def contour_smoothness(notes: list) -> float:

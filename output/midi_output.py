@@ -94,5 +94,11 @@ def play_timeline(
             ch = channel - 1
             midi_out.send_message([CC | ch, ALL_NOTES_OFF_CC, 0])
             midi_out.send_message([CC | ch, ALL_SOUND_OFF_CC, 0])
+            # Wolfson's own output/midi_output.py found (and documented) that
+            # Logic's software instruments ignore both CC messages above and
+            # need an explicit note_off per pitch -- the same fix, reused here
+            # rather than rediscovered, after a real stuck note during testing.
+            for pitch in range(128):
+                midi_out.send_message([NOTE_OFF | ch, pitch, 0])
         if owns_port:
             midi_out.close_port()

@@ -118,7 +118,7 @@ from typing import List, Optional, Tuple
 
 from song.chord import Chord
 
-from .critic import DEFAULT_WEIGHTS, motif_adherence, musicality_score
+from .critic import DEFAULT_WEIGHTS, dissonance, motif_adherence, musicality_score
 from .memory import RehearsalMemory
 from .timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from .voice import Generator
@@ -271,13 +271,20 @@ def sax_generator(
 
     n_candidates, if greater than 1, generates that many candidates per chunk
     (identical arguments each call) and keeps the one scoring highest by
-    (motif_adherence, musicality_score.overall), lexicographically — DESIGN.md
-    §13's "chess" search-and-evaluate idea, Phase 14, extended in Phase 17 so a
-    chunk with a real motif to aim for actually prefers a candidate that used
-    it, not just the generically highest-scoring one. When motif_targets is
-    empty, motif_adherence is 0.0 for every candidate, so this is provably
-    identical to Phase 14's overall-only comparison. Defaults to 1: exactly one
-    generate() call per chunk, exactly today's behaviour, unchanged.
+    (-dissonance, motif_adherence, musicality_score.overall), lexicographically
+    — DESIGN.md §13's "chess" search-and-evaluate idea, Phase 14, extended in
+    Phase 17 (motif_adherence) and Phase 18 (dissonance, checked FIRST). David's
+    own framing after hearing real output: "what's bad matters a lot" — a
+    candidate with one semitone-clash note (critic.py's dissonance — the
+    "minor 9th" relationship, judged the worst case in ordinary melodic
+    playing) is never preferred over a cleaner one just because it scored
+    better on other, unrelated dimensions blended into `overall`; dissonance
+    is a gate ahead of the positive-quality tie-breakers, not one more
+    positively-weighted ingredient diluted into the blend. When motif_targets
+    is empty and no candidate has any clash, this is provably identical to
+    Phase 14's overall-only comparison (both leading terms are 0/tied for
+    every candidate). Defaults to 1: exactly one generate() call per chunk,
+    exactly today's behaviour, unchanged.
 
     motif_recall_candidates, if given, overrides n_candidates specifically for
     a chunk that has a non-empty motif_targets — more search shots make it far
@@ -362,16 +369,26 @@ def sax_generator(
                 )
                 candidate_score = musicality_score(candidate_notes, chord_idx, seed_phrase, weights=critic_weights)
                 candidate_scores.append(candidate_score.overall)
-                # (adherence, overall) lexicographic key: when motif_targets is
-                # empty, adherence is 0.0 for every candidate, so this is
+                # (-dissonance, adherence, overall) lexicographic key: badness
+                # checked FIRST (negated so max() prefers the LOWEST dissonance),
+                # then adherence to a recalled motif, then general quality as the
+                # final tie-break -- see module docstring for why dissonance
+                # isn't just one more positively-weighted ingredient in `overall`.
+                # When motif_targets is empty and no candidate clashes, the first
+                # two terms are tied at (0.0, 0.0) for every candidate, so this is
                 # provably identical to comparing candidate_score.overall alone
-                # (Phase 14's behaviour) -- see module docstring.
-                key = (motif_adherence(candidate_notes, motif_targets), candidate_score.overall)
+                # (Phase 14's original behaviour).
+                key = (
+                    -dissonance(candidate_notes, chord_idx),
+                    motif_adherence(candidate_notes, motif_targets),
+                    candidate_score.overall,
+                )
                 if best_key is None or key > best_key:
                     best_notes, best_score, best_key = candidate_notes, candidate_score, key
             notes = best_notes
             generate.last_candidate_scores = candidate_scores
-            generate.motif_adherence_log.append(best_key[0])
+            generate.dissonance_log.append(-best_key[0])
+            generate.motif_adherence_log.append(best_key[1])
 
             if memory is not None:
                 memory.store(notes, score=best_score.overall)
@@ -382,4 +399,5 @@ def sax_generator(
     generate.critic_weights = critic_weights  # exposed for testing -- see module docstring
     generate.last_candidate_scores = []  # populated on the first chunk-build; exposed for testing
     generate.motif_adherence_log = []  # one entry per chunk-build, the WINNING candidate's motif_adherence
+    generate.dissonance_log = []  # one entry per chunk-build, the WINNING candidate's dissonance (Phase 18)
     return generate
