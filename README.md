@@ -98,6 +98,15 @@ implicit. `comping_generator` ducks when its target voice is busy, fills with ch
 stabs when it leaves space, plays one stab otherwise — demonstrated in
 `ensemble/demo.py` against a synthetic varying-density fixture rather than the sax
 stub, since `chord_tone_generator`'s output never varies in density at all.
+**Updated in Phase 15** (DESIGN.md §2): the same-register role-split default for
+two accompanists is now built (`ensemble/roles.py`'s `default_accompanist_roles`,
+a greedy register-overlap rule; `comping_generator`'s new `lay_out` parameter).
+Deliberately decided once at ensemble-construction time, not live per bar —
+computing it live would mean a voice's generator needing to know what another
+voice is *about* to play this same bar, which conflicts with the tested
+voice-order-independence guarantee above. The larger tune-level solo/accompany/
+lay-out/trade assignment (any voice, any role, any section — needs the rest of
+`ArcController`) is still entirely unbuilt.
 
 The fifth piece is the **musical director**'s dial channel (DESIGN.md §11,
 `ensemble/director.py`) — `Director`/`DirectorSource` deliberately mirror
@@ -361,7 +370,10 @@ suite is no longer sub-second once torch is imported.
   `Session.generate()` calls), `critic.py` (DESIGN.md §11/§12 — a musicality
   critic: `tonal_conformity`, `contour_smoothness`, `repetition`,
   `call_response_relatedness`, `singability`, `musicality_score`; every function
-  pure and deterministic, no model inference).
+  pure and deterministic, no model inference), `roles.py` (DESIGN.md §2 — the
+  same-instrument-doubling slice of role assignment: `default_accompanist_roles`,
+  a greedy register-overlap rule; consumed by `comping_generator`'s `lay_out`
+  parameter).
 - `ensemble/wolfson/` — ported generative core from wolfson (DESIGN.md §12):
   `lstm_model.py` (`PhraseModel`), `phrase_generator.py` (`PhraseGenerator`),
   `encoding.py`, `chords.py`, `scales.py`, `motifs.py` (`extract_interval_motifs`,
@@ -372,7 +384,7 @@ suite is no longer sub-second once torch is imported.
   `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
   `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py`,
   `tests/test_transitions.py`, `tests/test_sax.py`, `tests/test_memory.py`,
-  `tests/test_critic.py` — no MIDI hardware needed
+  `tests/test_critic.py`, `tests/test_roles.py` — no MIDI hardware needed
 - `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
   skips cleanly if they're not present (see Running, below)
 - `listen.py` — small runnable script: starts every source in `config.MIDI_SOURCES`,

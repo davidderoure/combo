@@ -5,6 +5,7 @@ from pathlib import Path
 from ensemble.comping import comping_generator
 from ensemble.director import DirectorSignal
 from ensemble.listening import synthetic_varying_density_generator
+from ensemble.roles import default_accompanist_roles
 from ensemble.session import Session
 from ensemble.timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from ensemble.voice import Voice
@@ -107,6 +108,60 @@ def test_voice_order_does_not_affect_output():
     forward = make_session(reversed_order=False).generate()
     reversed_ = make_session(reversed_order=True).generate()
     assert forward.events == reversed_.events
+
+
+def test_lay_out_produces_far_fewer_notes_than_full_over_many_bars():
+    song = load_blues()
+    full = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1)
+    laying_out = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1, lay_out=True)
+    since, _until = lookback_window(5)
+    tl = Timeline([NoteEvent("sax", 60, 80, since, 0.1)])  # sparse -> full would fill
+
+    full_count = sum(len(full(song, bar, tl, DirectorSignal())) for bar in range(5, 30))
+    lay_out_count = sum(len(laying_out(song, bar, tl, DirectorSignal())) for bar in range(5, 30))
+    assert lay_out_count < full_count / 4
+
+
+def test_lay_out_ignores_target_density_entirely():
+    song = load_blues()
+    gen = comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=1, lay_out=True)
+    since, _until = lookback_window(5)
+    # Very sparse target density — would normally trigger a two-stab fill.
+    tl = Timeline([NoteEvent("sax", 60, 80, since, 0.1)])
+    for bar in range(5, 25):
+        events = gen(song, bar, tl, DirectorSignal())
+        assert len(events) <= 2  # never the two-stab fill pattern
+
+
+def test_two_accompanists_with_overlapping_registers_split_role_in_session():
+    song = load_blues()
+    soloist = Voice(
+        id="sax",
+        instrument="sax",
+        register=(55, 79),
+        source="ai",
+        generator=synthetic_varying_density_generator(seed=1),
+    )
+    roles = default_accompanist_roles([("keys", KEYS_REGISTER), ("guitar", KEYS_REGISTER)])
+    assert roles == {"keys": True, "guitar": False}
+    keys = Voice(
+        id="keys",
+        instrument="keys",
+        register=KEYS_REGISTER,
+        source="ai",
+        generator=comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=2, lay_out=not roles["keys"]),
+    )
+    guitar = Voice(
+        id="guitar",
+        instrument="guitar",
+        register=KEYS_REGISTER,
+        source="ai",
+        generator=comping_generator(KEYS_REGISTER, target_voice_id="sax", seed=3, lay_out=not roles["guitar"]),
+    )
+    result = Session(song=song, voices=[soloist, keys, guitar]).generate()
+    keys_count = sum(1 for e in result if e.voice_id == "keys")
+    guitar_count = sum(1 for e in result if e.voice_id == "guitar")
+    assert guitar_count < keys_count / 2
 
 
 def test_generator_cannot_corrupt_the_session_timeline():

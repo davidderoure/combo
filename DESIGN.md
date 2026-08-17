@@ -7,8 +7,9 @@ for the design; individual decisions below supersede any earlier scattered notes
 song/scenario data model (§3), an ensemble skeleton MVP (§2/§4), a gesture vocabulary
 composition layer MVP (§10.1/§10.2), a rule-based drums voice (§7),
 accompaniment-listening (§5), the musical director's dial channel (§11),
-performer/director MIDI input (§6), and the handover half of transition triggers
-(§8 — see [README.md](README.md)). The ensemble MVP is a thin
+performer/director MIDI input (§6), the handover half of transition triggers
+(§8), and the same-instrument-doubling slice of role assignment (§2 — see
+[README.md](README.md)). The ensemble MVP is a thin
 `Voice`, a `Session` that steps a `Song` bar-by-bar into a symbolic `Timeline`, and
 machine-speed-vs-real-time pacing behind a single generation loop — proven multi-voice,
 not just single-voice, via `ensemble/demo.py` running the `chord_tone_generator` sax
@@ -122,18 +123,29 @@ something to measure: even 20 candidates over a 4-bar chunk cost ~164ms against
 a 7.3-second real-time budget at blues tempo, correcting that assumption rather
 than inheriting it — while being honest that this measures computation against
 `Session`'s pacing budget, not human-perceived latency in true live
-call-and-response, which is a different question this phase doesn't answer. All
+call-and-response, which is a different question this phase doesn't answer.
+Role assignment's smallest slice is also built now (Phase 15, §2): when two
+same-register voices are both accompanying, `ensemble/roles.py`'s
+`default_accompanist_roles` splits them — one full, one laying out — via a
+simple greedy register-overlap rule, decided once at ensemble-construction time
+(not a live per-bar signal, deliberately, to avoid conflicting with the tested
+voice-order-independence guarantee); `comping_generator` gained a `lay_out`
+parameter that replaces its usual duck/fill/moderate response with a rare,
+low-probability accent. The full tune-level solo/accompany/lay-out/trade
+assignment (needing the rest of `ArcController`) is not attempted — this is only
+the same-instrument-doubling piece §2 names as a separate, smaller thing. All
 with passing tests.
-**Not yet built even within these MVPs**: role assignment, same-instrument doubling
-and the register-split default, and tempo elasticity (§4.1/§4.2) within the ensemble
-skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
+**Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
+trade role assignment (needs the rest of `ArcController`), same-instrument-
+doubling role splitting applied to a voice changing role *over the course of* a
+piece rather than fixed for a whole `Session`, and tempo elasticity (§4.1/§4.2)
+within the ensemble skeleton; recognising *parameterised* gestures (`handover(target=…)`, `trade(unit=…)`
 — the data model can carry params, nothing populates them from raw playing yet) and
 §10.3's automatic inference of a genuinely new (non-aliased) taught meaning, within the
 gesture vocabulary layer; real swing-timing (triplet-based ride) and generative/soloing
-behaviour within drums; "mirrored" builds near arc peaks and the same-register
-role-split default applied between two accompanists, within accompaniment-listening —
-both need machinery (the *rest* of `ArcController`, role assignment) that doesn't
-exist yet; within the director, batch-mode scoring (the gesture channel now has its
+behaviour within drums; "mirrored" builds near arc peaks within accompaniment-listening
+(needs a peak/arc signal — the *rest* of `ArcController` — that doesn't exist yet; the
+same-register role-split default is now built, see above); within the director, batch-mode scoring (the gesture channel now has its
 first consumer, §11/§12, though only one gesture and one voice so far); within MIDI
 input, a source feeding more than one destination at once (a performer's gesture
 *also* reaching a `DirectorSignal` — representable now, not built), live human
@@ -201,7 +213,12 @@ see the note on `MidiListener` below.
   self-test mode). When two same-register voices are
   both in an accompanying role at once, the **default is to split the role** — one
   plays full accompaniment, the other lays out or plays sparse punctuation — rather
-  than both playing independently at full density and colliding.
+  than both playing independently at full density and colliding. **Built** (Phase
+  15): `ensemble/roles.py`'s `default_accompanist_roles` — a greedy, order-dependent
+  register-overlap rule, decided once at ensemble-construction time, not live —
+  and `comping_generator`'s `lay_out` parameter. The larger tune-level form
+  controller (any voice, any role, any section) named at the top of this section is
+  still entirely unbuilt.
 
 ## 3. Song as a persistent object
 
@@ -309,13 +326,21 @@ laterally, between two accompanists, not just between accompanist and soloist.
   accompanist built here. The other three are extracted and tested for future
   consumers, not yet used by anything. Said plainly rather than left to be discovered.
 - **Not built**: "occasional mirrored builds near arc peaks" (needs a peak/arc signal
-  — no `ArcController` exists yet) and the same-register role-split default applied
-  between two accompanists (needs role assignment — §2's role machinery isn't built
-  either). Only the single accompanist-listens-to-one-soloist case exists.
-- `ensemble/demo.py` demonstrates it against a synthetic varying-density fixture
-  (`synthetic_varying_density_generator`), not the sax stub — `chord_tone_generator`
-  plays a constant 4 notes every bar with no density variation at all, so there'd be
-  nothing for an accompanist to visibly react to.
+  — no `ArcController` exists yet).
+- **The same-register role-split default is built** (Phase 15, `ensemble/roles.py`,
+  `comping_generator`'s `lay_out` parameter — see §2). Deliberately construction-time,
+  not a live per-bar signal computed inside `Session.generate`: role-splitting is
+  per-voice (unlike `Timeline`/`DirectorSignal`, universal/aggregate across voices),
+  and deciding it live would need knowing what other voices are *about* to play this
+  same bar — conflicting with the tested voice-order-independence guarantee. So it's
+  decided once, at ensemble-construction time, the same pattern as `sax_generator`'s
+  `n_candidates`/`memory`/`plan_bars` — no changes to `Generator` or `Session`.
+- `ensemble/demo.py` demonstrates the accompanist-listens-to-soloist case against a
+  synthetic varying-density fixture (`synthetic_varying_density_generator`), not the
+  sax stub — `chord_tone_generator` plays a constant 4 notes every bar with no
+  density variation at all, so there'd be nothing for an accompanist to visibly react
+  to — and separately demonstrates the role-split case with two overlapping-register
+  comping voices.
 
 ## 6. Human input: everything through MIDI, no control panels or apps
 

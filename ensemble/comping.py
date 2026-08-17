@@ -5,11 +5,11 @@ seeded RNG. The difference is where the density signal comes from — drums read
 section/form state (ensemble/drums.py's own concern); this reads another voice's
 recent output via ensemble/listening.py's `density`.
 
-Only the accompanist-listens-to-soloist, complementary-only case is built here. Two
-things DESIGN.md §5 names are explicitly not attempted: "occasional mirrored builds
-near arc peaks" (needs a peak/arc signal — no ArcController exists yet) and "the
-same-register role-split default applied laterally between two accompanists" (needs
-role assignment — §2's role machinery isn't built yet either).
+Only the accompanist-listens-to-soloist, complementary-only case is built here. One
+thing DESIGN.md §5 names is explicitly not attempted: "occasional mirrored builds
+near arc peaks" (needs a peak/arc signal — no ArcController exists yet). The
+same-register role-split default (§2, Phase 15) is built: see the `lay_out`
+parameter below and ensemble/roles.py's `default_accompanist_roles`.
 """
 
 import random
@@ -24,6 +24,10 @@ STAB_DURATION_BEATS = 1.5
 TIMING_JITTER_BEATS = 0.02
 DEFAULT_VELOCITY = 65
 VELOCITY_JITTER = 8
+
+# Placeholder, same honest status as every other hand-picked constant in this
+# module — needs real tuning once there's a way to listen and compare.
+LAY_OUT_ACCENT_PROBABILITY = 0.15
 
 # notes/beat thresholds on the *target* voice's recent density, at neutral director
 # intensity (0.5). DESIGN.md §11: the director's dial shifts both thresholds together
@@ -61,20 +65,35 @@ def comping_generator(
     target_voice_id: str,
     lookback_bars: int = 2,
     seed: Optional[int] = None,
+    lay_out: bool = False,
 ) -> Generator:
     """Build a generator that listens to target_voice_id's density over the previous
     lookback_bars bars and responds complementarily. At bar_index < lookback_bars the
     window is empty -> density 0.0 -> fills by default (a harmless, expected edge
     case, not a bug: nothing's been heard yet, so there's nothing to duck for). Also
     reads the director's aggregated intensity each bar (DESIGN.md §11) and shifts its
-    duck/fill thresholds accordingly — see INTENSITY_SPREAD above."""
+    duck/fill thresholds accordingly — see INTENSITY_SPREAD above.
+
+    lay_out=True (DESIGN.md §2's same-register role-split default, Phase 15): this
+    accompanist is the second of two same-register accompanists (see
+    ensemble/roles.py's default_accompanist_roles), so the target-density
+    duck/fill/moderate logic above is bypassed entirely — laying out isn't about
+    reacting to the soloist, it's about staying out of the OTHER accompanist's way —
+    replaced with a rare, low-probability single accent. lay_out=False (the default)
+    is byte-identical to the pre-Phase-15 behaviour."""
     rng = random.Random(seed)
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
+        chord = song.chord_at(bar_index * BEATS_PER_BAR)
+
+        if lay_out:
+            if rng.random() < LAY_OUT_ACCENT_PROBABILITY:
+                return _stab(chord, register, bar_index, 0.0, rng)
+            return []
+
         since_beat = max(0, bar_index - lookback_bars) * BEATS_PER_BAR
         until_beat = bar_index * BEATS_PER_BAR
         target_density = density(timeline, target_voice_id, since_beat, until_beat)
-        chord = song.chord_at(bar_index * BEATS_PER_BAR)
 
         shift = (director_signal.intensity - 0.5) * INTENSITY_SPREAD
         busy_threshold = BUSY_THRESHOLD + shift

@@ -18,6 +18,7 @@ from ensemble.drums import ACOUSTIC_SNARE, CLOSED_HI_HAT, RIDE_CYMBAL_1
 from ensemble.listening import density as listening_density
 from ensemble.listening import synthetic_varying_density_generator
 from ensemble.memory import RehearsalMemory
+from ensemble.roles import default_accompanist_roles
 from ensemble.sax import sax_generator
 from ensemble.timeline import BEATS_PER_BAR, Timeline
 from ensemble.transitions import TransitionController, scripted_gesture_source
@@ -29,6 +30,7 @@ DEFAULT_CHART = Path(__file__).resolve().parent.parent / "songs" / "blues_in_f.c
 SAX_REGISTER = (55, 79)
 DRUM_REGISTER = (35, 59)  # not musically meaningful for percussion, kept for Voice's shape
 KEYS_REGISTER = (48, 72)
+GUITAR_REGISTER = (52, 76)  # overlaps KEYS_REGISTER — the role-split demo's point
 BASS_REGISTER = (28, 52)
 COMPING_LOOKBACK_BARS = 2
 SAX_WEIGHTS_PATH = Path(__file__).resolve().parent / "wolfson" / "models" / "sax_best.pt"
@@ -129,6 +131,52 @@ def demo_comping(chart_path: Path) -> None:
             response = "moderate"
         comping_notes = sum(1 for e in timeline if e.voice_id == "keys" and until <= e.start_beat < until + BEATS_PER_BAR)
         print(f"  bar {bar_index:2d}: soloist density {d:.2f} notes/beat -> comping {response} ({comping_notes} notes)")
+
+
+def demo_role_split(chart_path: Path) -> None:
+    print("\n--- Role assignment: accompanist doubling demo (DESIGN.md §2, Phase 15) ---")
+    print(f"Two comping voices, keys {KEYS_REGISTER} and guitar {GUITAR_REGISTER}, whose")
+    print("registers overlap — default_accompanist_roles() splits the role: keys stays")
+    print("full accompaniment, guitar lays out (rare single accents only), so the two")
+    print("don't collide in the same register.\n")
+
+    song = parse_chart(chart_path.read_text())
+    soloist = Voice(
+        id="soloist",
+        instrument="test-fixture",
+        register=SAX_REGISTER,
+        source="ai",
+        generator=synthetic_varying_density_generator(seed=1),
+    )
+    roles = default_accompanist_roles([("keys", KEYS_REGISTER), ("guitar", GUITAR_REGISTER)])
+    print(f"  default_accompanist_roles: {roles}\n")
+    keys = Voice(
+        id="keys",
+        instrument="keys",
+        register=KEYS_REGISTER,
+        source="ai",
+        generator=comping_generator(
+            KEYS_REGISTER, target_voice_id="soloist", lookback_bars=COMPING_LOOKBACK_BARS,
+            seed=2, lay_out=not roles["keys"],
+        ),
+    )
+    guitar = Voice(
+        id="guitar",
+        instrument="guitar",
+        register=GUITAR_REGISTER,
+        source="ai",
+        generator=comping_generator(
+            GUITAR_REGISTER, target_voice_id="soloist", lookback_bars=COMPING_LOOKBACK_BARS,
+            seed=3, lay_out=not roles["guitar"],
+        ),
+    )
+    session = Session(song=song, voices=[soloist, keys, guitar])
+    timeline = session.generate(mode=MACHINE_SPEED)
+
+    keys_count = sum(1 for e in timeline if e.voice_id == "keys")
+    guitar_count = sum(1 for e in timeline if e.voice_id == "guitar")
+    print(f"  keys notes over the whole chart:   {keys_count}")
+    print(f"  guitar notes over the whole chart: {guitar_count}  (laying out, so far fewer)")
 
 
 def _comping_response(target_density: float, intensity: float) -> str:
@@ -413,6 +461,7 @@ def main() -> None:
 
     demo_sax_and_drums(args.chart, args.mode)
     demo_comping(args.chart)
+    demo_role_split(args.chart)
     demo_director(args.chart)
     demo_transitions(args.chart)
     demo_sax_wolfson(args.chart)
