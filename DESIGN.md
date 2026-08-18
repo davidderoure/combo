@@ -157,6 +157,25 @@ demonstrated instead over `tests/test_sax_wolfson_integration.py`'s existing
 verified by replaying the actual stored history to confirm a later chorus's
 motif target came only from same-quality phrases, never a different chord's.
 
+**Rehearsals now cross process boundaries too, not just `Session.generate()`
+calls within one program** (Phase 26), prompted directly by David's own
+playing experience: he develops ideas within a song across choruses, and
+across separate rehearsals he experiments and carries the best ideas into the
+gig — "more rehearsals gives more ideas to remember." `RehearsalMemory` gains
+an optional `persist_path`: loaded from at construction if it already exists,
+written back to (atomically — write-then-replace, so a crash or Ctrl-C
+mid-write can never corrupt the file) after every `store()` call, not deferred
+to some explicit save step. Folded into the constructor/`store()` themselves —
+"nothing resets automatically... not a `reset()` method to remember to call"
+extended to "nothing needs manual saving either." `self_test.py --persist`
+keys the file per chart (`rehearsal_memory/<chart>.json`, gitignored — personal
+practice data, not source), matching "rehearsing a specific piece" rather than
+a global cross-tune vocabulary; off by default, so a plain run still touches
+nothing on disk. Verified with the genuine article: two independent
+`RehearsalMemory` objects (not the same one reused) sharing one file, the
+second recalling real motifs the first wrote — the only way that's possible is
+if save and load both actually work end-to-end, not just in isolation.
+
 Register/phrasing/tension-and-resolution (Phases 22-24) are three pieces of a
 larger "beginner vs advanced" idea from the same listening-test discussion; side-
 slipping and an actual call-site register-narrowing switch (vs. today's single

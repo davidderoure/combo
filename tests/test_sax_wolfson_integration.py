@@ -945,3 +945,34 @@ def test_chord_tagged_recall_reaches_real_selection_over_a_multi_quality_chart()
     # Not vacuous: at least one chunk actually got a real, non-empty target
     # from same-quality history.
     assert any(targets for _chord_idx, targets in calls)
+
+
+def test_disk_persistence_crosses_a_real_process_boundary(tmp_path):
+    """Phase 26: the genuine 'crosses a process boundary' proof no other test
+    provides -- two separate, independent RehearsalMemory OBJECTS (not the
+    same one reused, simulating two separate self_test.py --persist
+    invocations on separate days) sharing one JSON file on disk. Rehearsal 2's
+    first chunk getting a real motif_target is only possible if rehearsal 1's
+    save and rehearsal 2's load both actually worked end-to-end."""
+    path = tmp_path / "blues_in_f.json"
+
+    memory_1 = RehearsalMemory(persist_path=path)
+    make_slow_session(memory=memory_1, seed=9).generate()
+    assert path.exists()  # rehearsal 1 actually wrote something
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    first_chunk_targets = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        if not first_chunk_targets:
+            first_chunk_targets.append(kwargs.get("motif_targets") or [])
+        return original(self, seed_phrase, **kwargs)
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        memory_2 = RehearsalMemory(persist_path=path)  # a brand-new object -- simulates a fresh process
+        make_slow_session(memory=memory_2, seed=9).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert first_chunk_targets[0] != []  # rehearsal 2's first chunk recalled something from disk

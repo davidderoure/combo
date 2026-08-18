@@ -145,3 +145,73 @@ def test_recall_motifs_with_chord_quality_and_no_matching_history_is_empty():
     mem = RehearsalMemory()
     mem.store([{"pitch": p} for p in (60, 62, 64)], chord_quality=1)
     assert mem.recall_motifs(chord_quality=3) == {}  # quality 3 never stored
+
+
+# ---------------------------------------------------------------------------
+# disk persistence (Phase 26) -- pytest's tmp_path fixture, no weights needed
+# ---------------------------------------------------------------------------
+
+
+def test_persist_path_not_yet_existing_starts_empty(tmp_path):
+    """A fresh chart's first rehearsal has nothing to load -- a normal case,
+    not an error."""
+    mem = RehearsalMemory(persist_path=tmp_path / "new_chart.json")
+    assert mem.recall_motifs() == {}
+
+
+def test_store_with_persist_path_round_trips_to_a_second_independent_instance(tmp_path):
+    """The core proof: persistence across separate OBJECTS, not just within
+    one -- construct, store, then build a second, independent RehearsalMemory
+    pointed at the same path and confirm it recalls what the first stored,
+    including a chord_quality-specific recall."""
+    path = tmp_path / "blues_in_f.json"
+    first = RehearsalMemory(persist_path=path)
+    first.store([{"pitch": p} for p in (60, 62, 64)], score=0.8, chord_quality=1)
+
+    second = RehearsalMemory(persist_path=path)
+    assert second.recall_motifs()[(2, 2)] == 0.8
+    assert second.recall_motifs(chord_quality=1)[(2, 2)] == 0.8
+    assert second.recall_motifs(chord_quality=2) == {}
+
+
+def test_a_single_store_call_is_already_on_disk(tmp_path):
+    """Crash-safety: saving isn't deferred to the end of a run -- after just
+    ONE store() call, a second independent instance already sees it (the
+    concrete proof a Ctrl-C right after this point wouldn't lose it)."""
+    path = tmp_path / "blues_in_f.json"
+    mem = RehearsalMemory(persist_path=path)
+    mem.store([{"pitch": p} for p in (60, 61, 62)])  # motif (1,1)
+    reloaded = RehearsalMemory(persist_path=path)
+    assert reloaded.recall_motifs()[(1, 1)] == 1.0
+
+
+def test_max_phrases_cap_holds_across_a_reload(tmp_path):
+    """Store more than max_phrases across several independent instances
+    sharing one path -- oldest-first eviction must survive the round trip,
+    not just hold in a single in-memory session."""
+    path = tmp_path / "blues_in_f.json"
+    mem = RehearsalMemory(max_phrases=2, persist_path=path)
+    mem.store([{"pitch": p} for p in (60, 61, 62)])  # (1,1) -- should end up evicted
+    mem = RehearsalMemory(max_phrases=2, persist_path=path)  # simulates a fresh process
+    mem.store([{"pitch": p} for p in (60, 62, 64)])  # (2,2)
+    mem = RehearsalMemory(max_phrases=2, persist_path=path)
+    mem.store([{"pitch": p} for p in (60, 62, 64)])  # (2,2) again
+
+    final = RehearsalMemory(max_phrases=2, persist_path=path)
+    counts = final.recall_motifs()
+    assert counts[(1, 1)] == 0  # evicted
+    assert counts[(2, 2)] == 2
+
+
+def test_persist_path_none_never_touches_disk(monkeypatch):
+    """Default behaviour (no persist_path) must reproduce the exact
+    pre-Phase-26 in-memory-only behaviour -- zero disk I/O. Checked directly,
+    not inferred: _write would raise if it were ever called, the concrete
+    proof for every existing caller that never passes persist_path at all."""
+    def fail_if_called(self, path):
+        raise AssertionError("_write must never be called when persist_path is None")
+
+    monkeypatch.setattr(RehearsalMemory, "_write", fail_if_called)
+    mem = RehearsalMemory()
+    mem.store([{"pitch": p} for p in (60, 62, 64)])
+    mem.store([{"pitch": p} for p in (60, 61, 62)])

@@ -40,9 +40,23 @@ exactly as valid, transposed, over any other root of the same quality; tagging
 by root too would only fragment the buffer for no musical reason. Default
 None on both methods reproduces the exact pre-Phase-25 quality-agnostic
 pooling — no existing caller needs to change.
+
+Rehearsals can now cross PROCESS boundaries too, not just separate
+Session.generate() calls within one Python program (Phase 26) — an optional
+persist_path, given to the constructor, is loaded from if it already exists
+and written back to (atomically) after every store(). Folded into the
+constructor/store() themselves, not a separate save()/load() API to remember
+to call, extending this class's existing "nothing resets automatically"
+philosophy to "nothing needs manual saving either". Default None (no
+persist_path) reproduces the exact pre-Phase-26 in-memory-only behaviour —
+zero change for every existing caller. self_test.py's --persist flag is the
+first real consumer, keyed per chart (rehearsing THIS piece, not a global
+cross-tune vocabulary).
 """
 
+import json
 from collections import Counter
+from pathlib import Path
 from typing import List, Optional
 
 from .wolfson.motifs import extract_interval_motifs
@@ -52,9 +66,20 @@ DEFAULT_MAX_PHRASES = 16
 
 
 class RehearsalMemory:
-    def __init__(self, max_phrases: int = DEFAULT_MAX_PHRASES):
+    def __init__(self, max_phrases: int = DEFAULT_MAX_PHRASES, persist_path: Optional[Path] = None):
+        """persist_path (Phase 26): if given, rehearsals now cross PROCESS
+        boundaries too, not just separate Session.generate() calls within one
+        Python process -- loads existing content from persist_path if it
+        already exists (a fresh chart's first rehearsal has nothing to load,
+        a normal case, not an error), and every store() call afterwards
+        writes the updated state back. Default None reproduces the exact
+        pre-Phase-26 in-memory-only behaviour -- no disk I/O at all, zero
+        change for every existing caller."""
         self._max_phrases = max_phrases
-        self._phrases: List[dict] = []  # each entry: {"motifs": [...], "score": float}
+        self._persist_path = persist_path
+        self._phrases: List[dict] = []  # each entry: {"motifs": [...], "score": float, "chord_quality": ...}
+        if persist_path is not None and persist_path.exists():
+            self._phrases = self._read(persist_path)[-max_phrases:]
 
     def store(self, notes: list, score: float = 1.0, chord_quality: Optional[int] = None) -> None:
         """notes: PhraseGenerator.generate()'s raw output. REST_PITCH sentinels are
@@ -79,6 +104,34 @@ class RehearsalMemory:
         })
         if len(self._phrases) > self._max_phrases:
             self._phrases.pop(0)
+        if self._persist_path is not None:
+            self._write(self._persist_path)
+
+    @staticmethod
+    def _read(path: Path) -> List[dict]:
+        """JSON has no tuple type -- motifs round-trip list<->tuple explicitly
+        (list on disk, tuple in memory, matching extract_interval_motifs's own
+        return type)."""
+        raw = json.loads(path.read_text())
+        return [
+            {"motifs": [tuple(m) for m in entry["motifs"]], "score": entry["score"],
+             "chord_quality": entry.get("chord_quality")}
+            for entry in raw
+        ]
+
+    def _write(self, path: Path) -> None:
+        """Write-then-atomic-replace: a crash or Ctrl-C mid-write (a real risk
+        for a script meant to run during a live rehearsal) can never corrupt
+        the real file, only leave a harmless stray .tmp behind."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        raw = [
+            {"motifs": [list(m) for m in entry["motifs"]], "score": entry["score"],
+             "chord_quality": entry["chord_quality"]}
+            for entry in self._phrases
+        ]
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(raw))
+        tmp.replace(path)
 
     def recall_motifs(self, n_recent: int = DEFAULT_MAX_PHRASES, chord_quality: Optional[int] = None) -> Counter:
         """Counter of interval-motif tuples seen across the last n_recent stored

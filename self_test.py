@@ -10,6 +10,11 @@ whole ensemble rather than one bass+sax pair).
                                                 # carries across loops (DESIGN.md's
                                                 # rehearsal idea, Phase 11 — now
                                                 # audible instead of only tested)
+    python self_test.py --persist             # RehearsalMemory also survives THIS
+                                                # process exiting -- run again later
+                                                # (same or different day) and it picks
+                                                # up where it left off (Phase 26,
+                                                # rehearsal_memory/<chart>.json)
 
 Generation is machine_speed (instant) — DESIGN.md §4's "generation produces a
 symbolic timeline, playback/scheduling is a separate stage" architecture is
@@ -39,6 +44,8 @@ from output.midi_output import list_output_ports, play_timeline
 from song import parse_chart
 
 DEFAULT_CHART = Path(__file__).resolve().parent / "songs" / "blues_in_f.chart"
+REHEARSAL_MEMORY_DIR = Path(__file__).resolve().parent / "rehearsal_memory"  # Phase 26 -- gitignored,
+                                                                               # personal practice data
 BASS_REGISTER = (28, 52)
 SAX_REGISTER = (55, 79)
 KEYS_REGISTER = (48, 72)
@@ -182,6 +189,11 @@ def main() -> None:
                          help="Zero out the singability weight (Phase 13's toggle_singability, "
                               "here exposed as a flag instead of only a live director gesture) -- "
                               "don't mark down fast/exploratory playing for being unsustained.")
+    parser.add_argument("--persist", action="store_true",
+                         help="Phase 26: RehearsalMemory persists to disk, keyed by chart "
+                              "(rehearsal_memory/<chart>.json), so separate runs on separate days "
+                              "build on each other -- not just --loop within one run. Off by "
+                              "default: a plain run touches nothing on disk.")
     args = parser.parse_args()
 
     if args.list_out:
@@ -190,7 +202,8 @@ def main() -> None:
         return
 
     song = parse_chart(args.chart.read_text())
-    memory = RehearsalMemory()
+    persist_path = REHEARSAL_MEMORY_DIR / f"{args.chart.stem}.json" if args.persist else None
+    memory = RehearsalMemory(persist_path=persist_path)
 
     for i in range(args.loop):
         label = f" (rehearsal {i + 1}/{args.loop})" if args.loop > 1 else ""
