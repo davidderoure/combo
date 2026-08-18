@@ -603,6 +603,70 @@ def test_dissonance_mode_disabled_reverts_to_overall_only_selection():
     assert sax_gen.dissonance_log[-1] == recomputed_dissonances[overall_only.index(best_overall_only)]
 
 
+def test_credit_resolved_tension_reaches_real_selection():
+    """Phase 22: with credit_resolved_tension=True, the winning candidate is
+    the one selection actually picks under dissonance(..., credit_resolved_
+    tension=True) -- verified by recomputing the EXACT same key sax_generator
+    uses on real candidates (same spy-and-recompute technique as
+    test_search_prefers_lower_dissonance_even_without_a_motif_target), not
+    trusting sax_generator's own bookkeeping. Deterministic regardless of
+    whether any one candidate happens to contain a genuine resolved-tension
+    shape (Phase 11's own honest precedent: a targeted melodic device can be
+    real but rare in stochastic output) -- this proves the True path is
+    actually wired into real selection, not that a specific shape occurs."""
+    from ensemble.critic import dissonance, musicality_score
+    from ensemble.sax import _functional_tonic_scale
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=5, credit_resolved_tension=True)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        song = build_slow_song()
+        timeline = Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert len(candidates) == 16  # 2 chunks * 8 candidates
+    last_chunk = candidates[-8:]
+    second_chunk_start = 4 * BEATS_PER_BAR
+    functional_scale = _functional_tonic_scale(song, second_chunk_start)
+    assert functional_scale == frozenset()  # one chord the whole song -- no ii-V-I context here
+
+    recomputed = [
+        (
+            -dissonance(notes, kwargs["chord_idx"], extra_tolerated=functional_scale, credit_resolved_tension=True),
+            musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall,
+        )
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
+    best_key = max(recomputed)
+    winner_notes = last_chunk[recomputed.index(best_key)][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+    assert sax_gen.dissonance_log[-1] == -best_key[0]
+
+    # The True-crediting formula genuinely differs from the plain (uncredited)
+    # one for at least one real candidate in this chunk -- proof the flag
+    # isn't a no-op on real generated data, not just a correctly-wired but
+    # vacuous parameter.
+    plain = [dissonance(notes, kwargs["chord_idx"], extra_tolerated=functional_scale) for _sp, kwargs, notes in last_chunk]
+    credited = [-k[0] for k in recomputed]
+    assert any(c < p for c, p in zip(credited, plain))
+
+
 def build_ii_v_i_song() -> Song:
     """A genuine 1-bar-per-chord Dm7-G7-Cmaj7 turnaround -- bar-granular,
     matching _ii_v_i_target's own bar-level lookup exactly, so bar 0 (the ii)

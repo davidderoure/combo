@@ -90,12 +90,18 @@ def walking_bass_stub(register: Tuple[int, int]) -> Generator:
     return generate
 
 
-def build_voices(memory: RehearsalMemory):
+def build_voices(memory: RehearsalMemory, credit_resolved_tension: bool = False):
     """Returns (voices, sax_gen) -- sax_gen is the bare generator closure behind
     the sax Voice (or None if sax_best.pt isn't present), kept separately so
     main() can read its motif_adherence_log after each loop (Phase 17) the same
     way tests reach into a generator's exposed state -- Voice itself doesn't
-    expose anything beyond the closure it wraps."""
+    expose anything beyond the closure it wraps.
+
+    credit_resolved_tension (Phase 22): off by default -- a "beginner" default,
+    matching sax_generator's own. Pass --credit-resolved-tension to hear the
+    "advanced" behaviour instead: a deliberate, resolved tension (e.g. a b9
+    resolving by step to the root) survives selection rather than being
+    avoided outright."""
     bass = Voice(
         id="bass",
         instrument="bass (walking-bass stub -- real bass generation isn't built yet)",
@@ -117,7 +123,8 @@ def build_voices(memory: RehearsalMemory):
         # ~164ms/chunk for 20 candidates), since it's all spent up front during
         # machine_speed generation before playback starts.
         sax_gen = sax_generator(
-            SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=8, motif_recall_candidates=20
+            SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=8, motif_recall_candidates=20,
+            credit_resolved_tension=credit_resolved_tension,
         )
         voices.append(Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen))
     else:
@@ -160,6 +167,10 @@ def main() -> None:
     parser.add_argument("--out", type=int, default=MIDI_OUTPUT_PORT)
     parser.add_argument("--list-out", action="store_true")
     parser.add_argument("--loop", type=int, default=1)
+    parser.add_argument("--credit-resolved-tension", action="store_true",
+                         help="Phase 22: 'advanced' mode -- a deliberate, resolved tension "
+                              "(approached from an in-scale note, resolved by step onto a "
+                              "chord tone) survives selection instead of being avoided.")
     args = parser.parse_args()
 
     if args.list_out:
@@ -173,7 +184,7 @@ def main() -> None:
     for i in range(args.loop):
         label = f" (rehearsal {i + 1}/{args.loop})" if args.loop > 1 else ""
         print(f"\nGenerating{label}...")
-        voices, sax_gen = build_voices(memory)
+        voices, sax_gen = build_voices(memory, credit_resolved_tension=args.credit_resolved_tension)
         session = Session(song=song, voices=voices)
         timeline = session.generate(mode=MACHINE_SPEED)
         print(

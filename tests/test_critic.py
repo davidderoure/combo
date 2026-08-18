@@ -10,6 +10,7 @@ from ensemble.critic import (
     DEFAULT_WEIGHTS,
     _contour_string,
     _is_passing_tone,
+    _is_resolved_tension,
     _levenshtein,
     _semitones_to_scale,
     _widened_mode_scale,
@@ -25,7 +26,7 @@ from ensemble.critic import (
 )
 from ensemble.wolfson.chords import QUAL_DIM, QUAL_DOM, QUAL_MINOR
 from ensemble.wolfson.phrase_generator import REST_PITCH
-from ensemble.wolfson.scales import chord_root, chord_to_mode, scale_pitch_classes
+from ensemble.wolfson.scales import chord_root, chord_to_mode, chord_tones, scale_pitch_classes
 
 C_MAJOR = 0  # root=0 (C), quality_class=0 (QUAL_MAJOR) -> chord_idx = 0*4+0 = 0
 F_DOM = 5 * 4 + QUAL_DOM  # root=F(5) -- matches ensemble/sax.py's chord_idx mapping
@@ -279,6 +280,83 @@ def test_dissonance_still_counts_the_same_pitch_when_not_a_passing_tone():
     F7 = 5 * 4 + QUAL_DOM
     leapt_into = notes_from_pitches([60, 68, 69])  # C (leap), G#, A
     assert dissonance(leapt_into, F7) == pytest.approx(1 / 3)
+
+
+# ---------------------------------------------------------------------------
+# _is_resolved_tension / dissonance's tension-and-resolution exception (Phase 22)
+# ---------------------------------------------------------------------------
+# F7's dissonance_scale is {0,2,3,4,5,7,9,10,11} (missing 1, 6, 8 -- each
+# exactly 1 semitone away, so each is a "clash" pitch class). chord_tones(F7)
+# is {3, 5, 9} (Eb, F, A -- root/maj3/min7).
+
+
+def test_is_resolved_tension_true_when_approached_in_scale_and_resolved_onto_chord_tone():
+    scale = dissonance_scale(F_DOM)
+    tones = chord_tones(F_DOM)
+    notes = notes_from_pitches([60, 73, 75])  # C (in scale), Db (leap in), Eb (step out, chord tone)
+    assert _is_resolved_tension(notes, 1, scale, tones) is True
+
+
+def test_is_resolved_tension_false_when_approached_from_out_of_scale():
+    # Db is preceded by F# (itself out of scale) -- part of a longer
+    # excursion, not a single isolated reach, so it's not excused.
+    scale = dissonance_scale(F_DOM)
+    tones = chord_tones(F_DOM)
+    notes = notes_from_pitches([66, 73, 75])  # F# (out of scale), Db, Eb (chord tone)
+    assert _is_resolved_tension(notes, 1, scale, tones) is False
+
+
+def test_is_resolved_tension_false_when_resolution_exceeds_max_step():
+    scale = dissonance_scale(F_DOM)
+    tones = chord_tones(F_DOM)
+    notes = notes_from_pitches([60, 73, 90])  # resolves by a 17-semitone leap, not a step
+    assert _is_resolved_tension(notes, 1, scale, tones) is False
+
+
+def test_is_resolved_tension_false_when_resolved_onto_a_non_chord_tone():
+    scale = dissonance_scale(F_DOM)
+    tones = chord_tones(F_DOM)
+    notes = notes_from_pitches([60, 73, 74])  # resolves by step onto D -- in scale, not a chord tone
+    assert _is_resolved_tension(notes, 1, scale, tones) is False
+
+
+def test_is_resolved_tension_false_at_start_or_end_of_phrase():
+    scale = dissonance_scale(F_DOM)
+    tones = chord_tones(F_DOM)
+    notes = notes_from_pitches([60, 73, 75])
+    assert _is_resolved_tension(notes, 0, scale, tones) is False
+    assert _is_resolved_tension(notes, 2, scale, tones) is False
+
+
+def test_dissonance_excuses_a_resolved_tension_when_credited():
+    # Db (pc1) over F7 clashes in isolation. Approached from C (in
+    # dissonance_scale) and resolved by step onto Eb (a chord tone of F7) --
+    # a genuine tension-and-resolution, only excused when
+    # credit_resolved_tension=True. Default (False) reproduces the plain
+    # 1/3 clash rate -- the concrete before/after proof, and a regression
+    # check that the new parameter defaults to today's behaviour.
+    notes = notes_from_pitches([60, 73, 75])  # C, Db (leap in), Eb (step out, chord tone)
+    assert dissonance(notes, F_DOM, credit_resolved_tension=True) == 0.0
+    assert dissonance(notes, F_DOM, credit_resolved_tension=False) == pytest.approx(1 / 3)
+
+
+def test_dissonance_does_not_excuse_the_same_tension_approached_mid_excursion():
+    # Same target/resolution notes (Db -> Eb), but approached from F# (out
+    # of scale) instead -- reads as part of a longer excursion, not an
+    # isolated reach, so it's NOT excused even with credit_resolved_tension
+    # =True. Both the F# and the Db count as clashes: 2 of 3 real notes.
+    notes = notes_from_pitches([66, 73, 75])  # F# (out of scale), Db, Eb (chord tone)
+    assert dissonance(notes, F_DOM, credit_resolved_tension=True) == pytest.approx(2 / 3)
+
+
+def test_dissonance_does_not_excuse_an_unresolved_tension():
+    # Same approach (from an in-scale note), but the tension note is left
+    # UNRESOLVED -- landing on D (in scale, but not a chord tone) rather
+    # than a genuine chord-tone resolution. Still counts as a clash even
+    # with credit_resolved_tension=True -- the concrete "still catches
+    # getting lost" proof, not "any dissonant note is now free."
+    notes = notes_from_pitches([60, 73, 74])  # C, Db, D (in scale, not a chord tone)
+    assert dissonance(notes, F_DOM, credit_resolved_tension=True) == pytest.approx(1 / 3)
 
 
 # ---------------------------------------------------------------------------

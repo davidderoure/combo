@@ -67,7 +67,10 @@ DISSONANT_SEMITONE_DISTANCE = 1  # a note exactly this far from the nearest in-s
                                    # David's own musical judgment, not derived from anything
                                    # else in this codebase.
 PASSING_TONE_MAX_STEP = 2  # semitones -- standard tonal-theory "step" (minor or major
-                             # 2nd) on EITHER side of a passing tone; a placeholder like
+                             # 2nd), shared by both _is_passing_tone (either side of a
+                             # passing tone) and _is_resolved_tension (Phase 22, the
+                             # resolution side of a tension-and-release) -- one "step"
+                             # concept, not two constants for it. A placeholder like
                              # every other constant here, not asserted as musically final.
 
 DEFAULT_WEIGHTS = {
@@ -221,7 +224,34 @@ def _is_passing_tone(real_notes: list, i: int) -> bool:
     return (prev_interval > 0 and next_interval > 0) or (prev_interval < 0 and next_interval < 0)
 
 
-def dissonance(notes: list, chord_idx: int, extra_tolerated: frozenset = frozenset()) -> float:
+def _is_resolved_tension(real_notes: list, i: int, scale: frozenset, tones: frozenset) -> bool:
+    """True if real_notes[i] -- a clashing note -- reads as a deliberate,
+    RESOLVED tension rather than an unresolved clash (Phase 22, prompted
+    directly by David's own listening-test question: "I can hear the
+    difference between conscious use of discordant intervals and use due to
+    getting lost, panic, or playing randomly"): approached FROM an in-scale
+    note (a single isolated reach outward, not part of a longer excursion
+    that would read as "lost") and LEFT by step (<= PASSING_TONE_MAX_STEP
+    semitones) onto an actual CHORD TONE (tones -- chord_tones(), not just
+    any in-scale note: a genuine harmonic landing point, e.g. a b9
+    resolving down a half-step to the root). Distinct from
+    _is_passing_tone: that connects two flanking pitches by continuing
+    THROUGH in one direction; this LANDS deliberately and then resolves.
+    False at the very start/end of a phrase (nothing to approach from, or
+    resolve into -- no way to tell intent from a fragment)."""
+    if i == 0 or i == len(real_notes) - 1:
+        return False
+    if real_notes[i - 1]["pitch"] % 12 not in scale:
+        return False
+    next_interval = real_notes[i + 1]["pitch"] - real_notes[i]["pitch"]
+    if abs(next_interval) > PASSING_TONE_MAX_STEP:
+        return False
+    return real_notes[i + 1]["pitch"] % 12 in tones
+
+
+def dissonance(
+    notes: list, chord_idx: int, extra_tolerated: frozenset = frozenset(), credit_resolved_tension: bool = False
+) -> float:
     """Fraction of real notes that CLASH with the chord: pitch class out of
     scale and exactly DISSONANT_SEMITONE_DISTANCE semitones from the nearest
     in-scale pitch class -- found empirically, not assumed, by checking real
@@ -248,6 +278,14 @@ def dissonance(notes: list, chord_idx: int, extra_tolerated: frozenset = frozens
     ensemble/sax.py's _functional_tonic_scale, informed by the surrounding
     chord sequence, which this module has no access to).
 
+    credit_resolved_tension (Phase 22): when True, also excuses a clash that
+    reads as a deliberate, resolved tension (_is_resolved_tension above) --
+    "advanced" playing's use of #11/b9/#5-style color tones that resolve to
+    consonance, distinct from extra_tolerated's scale-membership widening.
+    Default False, unlike the always-on passing-tone exception: this isn't
+    universally uncontroversial the way a passing tone is, it's the
+    "advanced" behaviour itself, so a "beginner" default leaves it off.
+
     Higher is worse, unlike every other function in this module -- this is a
     badness signal for selection to minimise (ensemble/sax.py), not a
     goodness signal to blend into MusicalityScore/DEFAULT_WEIGHTS below,
@@ -257,6 +295,7 @@ def dissonance(notes: list, chord_idx: int, extra_tolerated: frozenset = frozens
     if not real:
         return 0.0
     scale = dissonance_scale(chord_idx) | extra_tolerated
+    tones = chord_tones(chord_idx) if credit_resolved_tension else frozenset()
     clashes = 0
     for i, n in enumerate(real):
         pc = n["pitch"] % 12
@@ -265,6 +304,8 @@ def dissonance(notes: list, chord_idx: int, extra_tolerated: frozenset = frozens
         if _semitones_to_scale(pc, scale) != DISSONANT_SEMITONE_DISTANCE:
             continue
         if _is_passing_tone(real, i):
+            continue
+        if credit_resolved_tension and _is_resolved_tension(real, i, scale, tones):
             continue
         clashes += 1
     return clashes / len(real)

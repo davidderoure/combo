@@ -101,6 +101,33 @@ architecture, DESIGN.md §12); a director-gesture-driven `n_candidates` toggle
 (the natural next use of Phase 13's exact critic_weights-mutation pattern, not
 built here).
 
+Tension-and-resolution crediting (Phase 22, DESIGN.md §12): sax_generator accepts
+credit_resolved_tension: bool = False, threaded straight into every dissonance()
+call in the search loop. Prompted directly by a listening-test question -- "I can
+hear the difference between conscious use of discordant intervals and use due to
+getting lost, panic, or playing randomly. I wonder how we could encode that." --
+answered by generalising the existing passing-tone exception (Phase 19) to a
+second, distinct melodic device: a clash approached from an in-scale note (a
+single isolated reach outward, not mid-excursion) and resolved by step onto an
+actual chord tone (ensemble/critic.py's _is_resolved_tension) reads as deliberate
+"advanced" playing -- #11/b9/#5-style tensions resolving to consonance -- rather
+than noise. Off by default (unlike the always-on passing-tone exception): this
+isn't universally uncontroversial the way a passing tone is, it's the "advanced"
+behaviour itself, so a "beginner" default leaves it off, matching every existing
+call site's behaviour exactly. Explicitly narrower than what it might sound like:
+covers only a SINGLE isolated tension-then-resolution note, not a multi-note
+excursion (real side-slipping -- shifting a whole pattern outside the changes and
+back -- needs actual generation-time mechanics, not a scoring exemption, and isn't
+attempted here); doesn't reward tension use, only stops penalising it when
+resolved; and isn't wired to a live director gesture this phase (every same-symbol
+gesture pattern short enough to be practical is already claimed -- see
+gesture/vocabulary.py -- a new pattern needs its own design and empirical
+verification, Phase 13/20's discipline, not bundled in here). Register-as-
+skill-level and phrasing/"sentences with gaps" are two more adjacent ideas from the
+same discussion, also deliberately not attempted here -- a call-site register
+choice and a different critic dimension (rest structure) respectively, neither of
+which this parameter touches.
+
 Explicitly deferred (see DESIGN.md §12 for the full list): all ~10 of
 PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, register
 contrast, etc. — motif_targets/motif_strength are now wired, via memory) are left
@@ -300,6 +327,7 @@ def sax_generator(
     memory: Optional[RehearsalMemory] = None,
     n_candidates: int = 1,
     motif_recall_candidates: Optional[int] = None,
+    credit_resolved_tension: bool = False,
     model_path: Optional[str] = None,
     seed: Optional[int] = None,
 ) -> Generator:
@@ -455,7 +483,12 @@ def sax_generator(
                 # even when dissonance_mode is disabled (Phase 20) -- cheap, and
                 # keeps dissonance_log meaningful regardless of what's currently
                 # driving selection -- only whether it counts in the key is gated.
-                d = dissonance(candidate_notes, chord_idx, extra_tolerated=functional_scale)
+                d = dissonance(
+                    candidate_notes,
+                    chord_idx,
+                    extra_tolerated=functional_scale,
+                    credit_resolved_tension=credit_resolved_tension,
+                )
                 key = (
                     -d if dissonance_mode["enabled"] else 0.0,
                     motif_adherence(candidate_notes, motif_targets),

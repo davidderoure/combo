@@ -454,6 +454,36 @@ Dm7-G7-Cmaj7 chart. Explicitly deferred: a vi-ii-V-I (four-chord) extension,
 a minor-tonic ii-V-i variant, and sub-bar-granular chord sequences (more than
 one chord change per bar).
 
+**Tension-and-resolution crediting** (Phase 22) — prompted directly by a
+listening-test question: "I can hear the difference between conscious use of
+discordant intervals and use due to getting lost, panic, or playing randomly.
+I wonder how we could encode that." Generalises the passing-tone exception
+(Phase 19 — moves THROUGH a dissonance between two flanking pitches) to a
+second, distinct device: a clash approached from an in-scale note (a single
+isolated reach outward, not mid-excursion) and resolved by step onto an
+actual chord tone (`ensemble/critic.py`'s new `_is_resolved_tension`) — a b9
+resolving down a half-step to the root, say. Unlike every earlier lever, this
+one is opt-in: `dissonance()` gains `credit_resolved_tension: bool = False`,
+threaded through as `sax_generator`'s own parameter of the same name and
+`self_test.py`/`out_of_key_check.py`'s new `--credit-resolved-tension` flag —
+default off (a "beginner" default), since unlike a passing tone this isn't
+universally uncontroversial, it's the "advanced" behaviour itself. Verified
+on real output, not assumed: without the flag, only 4.1% (2/49) of what
+survives selection happens to already look like a resolved tension by
+accident; with it, two separate 5-loop runs, 28.3% (15/53) then 52.4%
+(22/42) of what's flagged are genuine resolved tensions — real and
+repeatable, not a one-off (`out_of_key_check.py`'s own docstring has the
+full numbers). Explicitly narrower than it might sound: covers only a
+SINGLE isolated tension-then-resolution note, not a multi-note excursion
+(genuine side-slipping needs real generation-time mechanics, not a scoring
+exemption); doesn't reward tension use, only stops penalising it once
+resolved; not wired to a live director gesture this phase (every practical
+same-symbol gesture pattern is already claimed). Two more adjacent ideas
+from the same discussion, deliberately not attempted here: register range as
+a skill-level control (a call-site choice, not a code change — `register` is
+already a real parameter) and phrasing/"speaking in sentences" with gaps
+(a different critic dimension entirely).
+
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
 in Phase 5 (every phase since had repeated some version of "a director-emitted

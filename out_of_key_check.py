@@ -58,6 +58,22 @@ at all -- it's simply in-scale now, not merely excused. Of what's still
 flagged, 78.5% then 56.2% were genuine passing tones -- the widened scale
 mostly removed the *previously-miscounted* clashes (bebop tensions that were
 never really dissonant), leaving a real, still-mostly-explained remainder.
+
+Phase 22 added a third category alongside passing tones: RESOLVED TENSIONS --
+a clash approached from an in-scale note and resolved by step onto an actual
+chord tone (a b9-to-root shape, say), the "advanced" playing David asked to
+be able to distinguish from noise. Unlike passing tones, this exception is
+opt-in (`credit_resolved_tension`, default off -- a "beginner" default) since
+it isn't universally uncontroversial the way a passing tone is. Without the
+flag (5 loops): 3.0% out-of-key (49/1639), 75.5% passing tones, and only
+4.1% (2/49) happened to already look like resolved tensions by accident --
+selection wasn't crediting them, so most that would qualify were simply
+never chosen. WITH the flag, two separate 5-loop runs: 3.5% (53/1523) then
+2.5% (42/1691) out-of-key -- broadly similar to without, not a big jump --
+but of what's flagged, 28.3% (15/53) then 52.4% (22/42) are now genuine
+resolved tensions -- a real, repeatable, substantial share, not a one-off:
+selection is actively letting deliberate, resolved color-tone use survive
+now, not just tolerating it after the fact.
 """
 
 import argparse
@@ -65,9 +81,10 @@ from collections import Counter
 from pathlib import Path
 
 from ensemble import MACHINE_SPEED, Session, Voice
-from ensemble.critic import _is_passing_tone, dissonance_scale
+from ensemble.critic import _is_passing_tone, _is_resolved_tension, dissonance_scale
 from ensemble.memory import RehearsalMemory
 from ensemble.sax import chord_to_wolfson_index, sax_generator
+from ensemble.wolfson.scales import chord_tones
 from song import parse_chart
 
 import self_test as st
@@ -88,6 +105,10 @@ def main() -> None:
     parser.add_argument("--loops", type=int, default=5)
     parser.add_argument("--n-candidates", type=int, default=8)
     parser.add_argument("--motif-recall-candidates", type=int, default=20)
+    parser.add_argument("--credit-resolved-tension", action="store_true",
+                         help="Phase 22: pass credit_resolved_tension=True into sax_generator, "
+                              "so a deliberate, resolved tension can survive selection too, not just "
+                              "be reported on in the breakdown below.")
     args = parser.parse_args()
 
     song = parse_chart(args.chart.read_text())
@@ -96,6 +117,7 @@ def main() -> None:
     total_notes = 0
     out_of_key = 0
     passing_tones = 0
+    resolved_tensions = 0
     distance_counter = Counter()
     examples = []
 
@@ -103,7 +125,8 @@ def main() -> None:
         bass = Voice(id="bass", instrument="bass", register=st.BASS_REGISTER, source="ai",
                      generator=st.walking_bass_stub(st.BASS_REGISTER))
         sax_gen = sax_generator(st.SAX_REGISTER, target_voice_id="bass", memory=memory,
-                                 n_candidates=args.n_candidates, motif_recall_candidates=args.motif_recall_candidates)
+                                 n_candidates=args.n_candidates, motif_recall_candidates=args.motif_recall_candidates,
+                                 credit_resolved_tension=args.credit_resolved_tension)
         sax = Voice(id="sax", instrument="sax", register=st.SAX_REGISTER, source="ai", generator=sax_gen)
         timeline = Session(song=song, voices=[bass, sax]).generate(mode=MACHINE_SPEED)
 
@@ -127,25 +150,40 @@ def main() -> None:
                 out_of_key += 1
                 dist = semitone_distance_to_scale(pitch_class, scale)
                 distance_counter[dist] += 1
+                # Classification order: passing tone first (Phase 19,
+                # already established), then resolved tension (Phase 22),
+                # then unexplained clash -- a reporting simplification for
+                # the rare case a note could satisfy both.
                 is_passing = dist == 1 and _is_passing_tone(sax_notes, idx)
+                is_resolved = (
+                    not is_passing and dist == 1
+                    and _is_resolved_tension(sax_notes, idx, scale, chord_tones(chord_idx))
+                )
                 if is_passing:
                     passing_tones += 1
+                elif is_resolved:
+                    resolved_tensions += 1
+                label = "passing tone" if is_passing else "resolved tension" if is_resolved else "clash"
                 if len(examples) < 15:
-                    examples.append((chord, note_name(event.pitch), dist, is_passing))
+                    examples.append((chord, note_name(event.pitch), dist, label))
 
     print(f"Sax notes generated: {total_notes} ({args.loops} loops, {args.chart.name}, "
-          f"n_candidates={args.n_candidates}, motif_recall_candidates={args.motif_recall_candidates})")
+          f"n_candidates={args.n_candidates}, motif_recall_candidates={args.motif_recall_candidates}, "
+          f"credit_resolved_tension={args.credit_resolved_tension})")
     print(f"Out-of-key notes: {out_of_key} ({100 * out_of_key / total_notes:.1f}%)")
-    print(f"  of which genuine passing tones (excused during selection): {passing_tones} "
-          f"({100 * passing_tones / out_of_key:.1f}% of out-of-key notes)" if out_of_key else "")
-    print(f"  of which unexplained clashes: {out_of_key - passing_tones}")
+    if out_of_key:
+        print(f"  of which genuine passing tones (excused during selection): {passing_tones} "
+              f"({100 * passing_tones / out_of_key:.1f}% of out-of-key notes)")
+        print(f"  of which resolved tensions (Phase 22 -- excused only when "
+              f"--credit-resolved-tension is passed): {resolved_tensions} "
+              f"({100 * resolved_tensions / out_of_key:.1f}% of out-of-key notes)")
+    print(f"  of which unexplained clashes: {out_of_key - passing_tones - resolved_tensions}")
     print("\nOut-of-key notes by semitone distance to the nearest in-scale pitch class:")
     for dist in sorted(distance_counter):
         print(f"  {dist} semitone{'s' if dist != 1 else ''} away: {distance_counter[dist]}")
-    print("\nExamples (chord, note played, semitones from nearest in-scale tone, passing tone?):")
-    for chord, name, dist, is_passing in examples:
-        print(f"  {chord!s:>6}  {name:>4}  {dist} semitone{'s' if dist != 1 else ''}  "
-              f"{'passing tone' if is_passing else 'clash'}")
+    print("\nExamples (chord, note played, semitones from nearest in-scale tone, classification):")
+    for chord, name, dist, label in examples:
+        print(f"  {chord!s:>6}  {name:>4}  {dist} semitone{'s' if dist != 1 else ''}  {label}")
 
 
 if __name__ == "__main__":
