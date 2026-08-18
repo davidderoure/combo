@@ -211,6 +211,27 @@ parameter tolerating P4/P5 leaps (not wider ones) when true, and
 and `musicality_score` (scoring) from the same place, so the two can never
 disagree.
 
+**A corpus-similarity critic is feasible, measured for real, not estimated**
+(Phase 28) — the efficiency worry raised discussing it (naive edit-distance-
+against-every-corpus-window-per-candidate would be far too slow) turns out to
+be a non-issue for the precomputed-frequency-table approach actually proposed.
+`wjd_corpus.py` (new, gitignored `wjd_data/` holds the downloaded Weimar Jazz
+Database `wjazzd.db` and a derived JSON motif-frequency cache — external
+research data, not source) builds a corpus-wide pitch- and duration-motif
+`Counter` from all 456 WJD solos (200,809 notes) — pitch via the existing
+`extract_interval_motifs`, duration via a new sibling, `ensemble/rhythm_motifs.py`'s
+`extract_duration_motifs` (duration-TOKEN n-grams via `dur_to_token`, not
+interval deltas — a rhythmic figure's identity is the actual sequence of note
+values, not a relative delta, unlike pitch shape). Real numbers: building the
+whole table from scratch takes 3.1s (a one-time cost); once built, 20
+candidate lookups (matching `motif_recall_candidates`) against a real 8-note
+sample chunk's own 33 motifs cost 0.05ms total — effectively free, the same
+`Counter`-lookup cost order as every other critic function. This phase is
+feasibility/benchmarking only: nothing is wired into `sax_generator`'s real
+selection, and the relationship between this corpus-based signal and the
+existing rule-based critic — David's own open question, "we'll see what
+combination we need" — is deliberately still unresolved.
+
 Register/phrasing/tension-and-resolution (Phases 22-24) are three pieces of a
 larger "beginner vs advanced" idea from the same listening-test discussion; side-
 slipping and an actual call-site register-narrowing switch (vs. today's single

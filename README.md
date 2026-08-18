@@ -445,6 +445,30 @@ explicitly separate idea from the same discussion is a whole-solo
 genuinely different in kind, since every metric here scores one chunk in
 isolation, not a performance.
 
+**A corpus-similarity critic is feasible, measured for real, not estimated**
+(Phase 28, `wjd_corpus.py`). The efficiency worry raised discussing a
+corpus-based critic — naive edit-distance-against-every-corpus-window-per-
+candidate would be far too slow — turns out to be a non-issue for a
+precomputed-frequency-table approach, the same `Counter`-based shape
+`RehearsalMemory` already uses. Downloaded (with explicit permission) into
+gitignored `wjd_data/`: the Weimar Jazz Database's `wjazzd.db` (SQLite, 456
+solos, 200,809 notes) and its unquantized-MIDI archive. Checked directly, not
+assumed: `melody.onset`/`duration` are in seconds, not beats, but
+`melody.beatdur` gives each note's own real per-note beat duration, so
+`duration_beats = duration / beatdur` needs no tempo guessing. Pitch motifs
+reuse `extract_interval_motifs`; a new sibling, `ensemble/rhythm_motifs.py`'s
+`extract_duration_motifs`, does the same for rhythm — duration-TOKEN
+(`dur_to_token`) n-grams, not interval deltas, since a rhythmic figure's
+identity is the actual sequence of note values, not a relative delta, unlike
+pitch shape. Real measured numbers: building the whole corpus-wide table from
+scratch takes 3.1s (a one-time cost, `python wjd_corpus.py --build`); once
+built, 20 candidate lookups (matching `motif_recall_candidates`) against a
+real 8-note sample chunk's 33 motifs cost 0.05ms total
+(`--benchmark`) — effectively free. Feasibility/benchmarking only: nothing is
+wired into `sax_generator`'s real selection, and how this corpus-based signal
+should relate to the existing rule-based critic — David's own open question,
+"we'll see what combination we need" — is deliberately still unresolved.
+
 **The rehearsal effect is now real, not just wired** (Phase 17). A controlled A/B
 test (`rehearsal_ab_test.py`, kept as a reusable tool rather than a throwaway
 script) comparing one `RehearsalMemory` shared across `--loop` iterations against a
@@ -711,7 +735,10 @@ suite is no longer sub-second once torch is imported.
   model inference), `roles.py` (DESIGN.md §2 — the
   same-instrument-doubling slice of role assignment: `default_accompanist_roles`,
   a greedy register-overlap rule; consumed by `comping_generator`'s `lay_out`
-  parameter).
+  parameter), `rhythm_motifs.py` (DESIGN.md §13 — `extract_duration_motifs`,
+  Phase 28's duration-token n-gram sibling to `wolfson/motifs.py`'s
+  `extract_interval_motifs`, combo-authored so it doesn't live under
+  `ensemble/wolfson/`).
 - `output/midi_output.py` — the playback stage (DESIGN.md §4): `list_output_ports`,
   `build_schedule` (pure: `Timeline` + tempo + channel map -> a time-sorted MIDI
   schedule), `play_timeline` (real-time playback, reusing `ensemble.session`'s
@@ -727,8 +754,8 @@ suite is no longer sub-second once torch is imported.
   `tests/test_session.py`, `tests/test_drums.py`, `tests/test_listening.py`,
   `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py`,
   `tests/test_transitions.py`, `tests/test_sax.py`, `tests/test_memory.py`,
-  `tests/test_critic.py`, `tests/test_roles.py`, `tests/test_midi_output.py` — no
-  MIDI hardware needed
+  `tests/test_critic.py`, `tests/test_roles.py`, `tests/test_midi_output.py`,
+  `tests/test_rhythm_motifs.py` — no MIDI hardware needed
 - `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
   skips cleanly if they're not present (see Running, below)
 - `listen.py` — small runnable script: starts every source in `config.MIDI_SOURCES`,
@@ -755,6 +782,13 @@ suite is no longer sub-second once torch is imported.
   active chord's scale, at `self_test.py`'s real settings — see Phase 18's
   dissonance-avoidance paragraph above for what it found
   (`python out_of_key_check.py`)
+- `wjd_corpus.py` — small runnable feasibility/benchmark script (DESIGN.md §13,
+  Phase 28): builds a corpus-wide pitch- and duration-motif frequency table
+  from the Weimar Jazz Database (`wjd_data/wjazzd.db`, gitignored — not
+  committed), caches it to disk, and times both the build and 20 candidate
+  lookups against a real sample chunk — see the corpus-similarity paragraph
+  above for the real numbers (`python wjd_corpus.py --build`,
+  `python wjd_corpus.py --benchmark`)
 
 ## Running
 

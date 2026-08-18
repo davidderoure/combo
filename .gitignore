@@ -15,3 +15,8 @@ rehearsal_ab_test*.png
 
 # self_test.py --persist (Phase 26) -- personal practice data, not source.
 rehearsal_memory/
+
+# Weimar Jazz Database (Phase 28, DESIGN.md §13) -- external research data
+# downloaded from jazzomat.hfm-weimar.de, not source; also a derived
+# frequency-table cache built from it. Never redistributed via this repo.
+wjd_data/
