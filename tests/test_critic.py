@@ -26,6 +26,7 @@ from ensemble.critic import (
     motif_adherence,
     musicality_score,
     phrasing,
+    register_usage,
     repetition,
     singability,
     tonal_conformity,
@@ -38,6 +39,7 @@ C_MAJOR = 0  # root=0 (C), quality_class=0 (QUAL_MAJOR) -> chord_idx = 0*4+0 = 0
 F_DOM = 5 * 4 + QUAL_DOM  # root=F(5) -- matches ensemble/sax.py's chord_idx mapping
 D_MINOR = 2 * 4 + QUAL_MINOR
 G_DIM = 7 * 4 + QUAL_DIM
+REGISTER = (55, 79)  # matches tests/test_sax_wolfson_integration.py's SAX_REGISTER
 
 
 def notes_from_pitches(pitches, duration_beats=1.0):
@@ -575,6 +577,47 @@ def test_phrasing_denominator_is_total_duration_not_just_real_note_time():
 
 
 # ---------------------------------------------------------------------------
+# register_usage (Phase 24)
+# ---------------------------------------------------------------------------
+# REGISTER = (55, 79), width 24 semitones.
+
+
+def test_register_usage_no_notes_is_zero():
+    assert register_usage([], REGISTER) == 0.0
+
+
+def test_register_usage_single_real_note_is_zero():
+    assert register_usage(notes_from_pitches([60]), REGISTER) == 0.0
+
+
+def test_register_usage_is_the_in_register_span_fraction():
+    # Pitches 60 and 72 -- both in REGISTER, span 12 semitones -> 12/24 = 0.5.
+    notes = notes_from_pitches([60, 65, 72])
+    assert register_usage(notes, REGISTER) == pytest.approx(0.5)
+
+
+def test_register_usage_full_register_is_one():
+    notes = notes_from_pitches([55, 67, 79])  # spans the entire register
+    assert register_usage(notes, REGISTER) == pytest.approx(1.0)
+
+
+def test_register_usage_ignores_out_of_register_outliers():
+    # Same in-register pair (60, 66 -- span 6/24=0.25) as the baseline, but
+    # with an extra note OUTSIDE the register (40, well below REGISTER's
+    # low of 55). The raw span (66-40=26) would exceed the register's own
+    # width entirely; the out-of-register note must not inflate the score,
+    # since it will never actually sound (_split_phrase_into_bars drops it).
+    baseline = notes_from_pitches([60, 66])
+    with_outlier = notes_from_pitches([40, 60, 66])
+    assert register_usage(baseline, REGISTER) == pytest.approx(0.25)
+    assert register_usage(with_outlier, REGISTER) == pytest.approx(register_usage(baseline, REGISTER))
+
+
+def test_register_usage_zero_width_register_is_zero():
+    assert register_usage(notes_from_pitches([60, 62]), (60, 60)) == 0.0
+
+
+# ---------------------------------------------------------------------------
 # musicality_score combination
 # ---------------------------------------------------------------------------
 
@@ -582,7 +625,7 @@ def test_phrasing_denominator_is_total_duration_not_just_real_note_time():
 def test_musicality_score_overall_is_the_documented_weighted_sum():
     notes = notes_from_pitches([60, 62, 64, 60, 62, 64], duration_beats=0.95)
     seed = notes_from_pitches([60, 62, 64])
-    score = musicality_score(notes, C_MAJOR, seed)
+    score = musicality_score(notes, C_MAJOR, seed, REGISTER)
 
     expected_overall = (
         score.tonal_conformity * DEFAULT_WEIGHTS["tonal_conformity"]
@@ -591,6 +634,7 @@ def test_musicality_score_overall_is_the_documented_weighted_sum():
         + score.call_response_relatedness * DEFAULT_WEIGHTS["call_response_relatedness"]
         + score.singability * DEFAULT_WEIGHTS["singability"]
         + score.phrasing * DEFAULT_WEIGHTS["phrasing"]
+        + score.register_usage * DEFAULT_WEIGHTS["register_usage"]
     )
     assert score.overall == pytest.approx(expected_overall)
 
@@ -603,9 +647,9 @@ def test_musicality_score_weights_can_be_overridden_per_call():
     notes = notes_from_pitches([60, 62, 64, 60, 62, 64], duration_beats=0.95)
     seed = notes_from_pitches([60, 62, 64])
 
-    default_score = musicality_score(notes, C_MAJOR, seed)
+    default_score = musicality_score(notes, C_MAJOR, seed, REGISTER)
     zeroed_weights = dict(DEFAULT_WEIGHTS, singability=0.0)
-    zeroed_score = musicality_score(notes, C_MAJOR, seed, weights=zeroed_weights)
+    zeroed_score = musicality_score(notes, C_MAJOR, seed, REGISTER, weights=zeroed_weights)
 
     assert zeroed_score.singability == default_score.singability  # sub-score still reported
     assert zeroed_score.overall != default_score.overall  # but no longer counted toward overall

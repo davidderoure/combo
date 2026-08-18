@@ -46,6 +46,7 @@ musically validated.
 import math
 from collections import Counter
 from dataclasses import dataclass
+from typing import Tuple
 
 from .wolfson.chords import N_QUALITIES, QUAL_DOM
 from .wolfson.encoding import dur_to_token
@@ -93,11 +94,12 @@ BREATH_FRACTION_WIDTH = 0.08   # placeholder -- same bell-curve treatment as
 
 DEFAULT_WEIGHTS = {
     "tonal_conformity": 0.2,
-    "contour_smoothness": 0.15,
-    "repetition": 0.15,
-    "call_response_relatedness": 0.15,
+    "contour_smoothness": 0.1,
+    "repetition": 0.1,
+    "call_response_relatedness": 0.1,
     "singability": 0.15,
-    "phrasing": 0.2,
+    "phrasing": 0.15,
+    "register_usage": 0.2,
 }
 
 
@@ -475,6 +477,42 @@ def phrasing(notes: list) -> float:
     return math.exp(-0.5 * (dist / BREATH_FRACTION_WIDTH) ** 2)
 
 
+def register_usage(notes: list, register: Tuple[int, int]) -> float:
+    """Fraction of `register`'s width spanned by this chunk's IN-REGISTER real
+    notes -- prompted directly by a listening-test observation ("not much range
+    of the instrument is being used"). Deliberately measured over in-register
+    notes only, not every real note candidate generation produces: candidate_notes
+    (what musicality_score scores) are the model's RAW output, before
+    _split_phrase_into_bars clips out-of-register pitches for playback -- checked
+    directly, not assumed: 13 of 40 real 4-bar chunks had at least one
+    out-of-register note (Wolfson's own trained pitch vocabulary is MIDI 44-93,
+    wider than any `register` passed in), so a raw-span measurement can reward
+    spread that never actually sounds.
+
+    Deliberately NOT a bell curve around a target (unlike phrasing/singability):
+    there's no clear "too much range" complaint the way there is for breath --
+    `register` itself already caps what's appropriate for the chosen skill level,
+    and contour_smoothness already penalises erratic wide leaps separately
+    (SMOOTH_INTERVAL_MAX_SEMITONES). This is a monotonic "use more of what
+    you're given" reward instead, balanced against the other six blended
+    metrics rather than self-penalising at the top end.
+
+    No separate beginner/advanced mode: the skill-level distinction lives
+    entirely in which `register` the CALLER passes to sax_generator -- a
+    narrow register already caps how much span is possible, so this metric
+    doesn't need to know which mode is active.
+
+    Fewer than 2 in-register real notes -> 0.0 (nothing to span)."""
+    low, high = register
+    width = high - low
+    if width <= 0:
+        return 0.0
+    in_register = [n["pitch"] for n in _real_notes(notes) if low <= n["pitch"] <= high]
+    if len(in_register) < 2:
+        return 0.0
+    return (max(in_register) - min(in_register)) / width
+
+
 @dataclass(frozen=True)
 class MusicalityScore:
     tonal_conformity: float
@@ -483,17 +521,24 @@ class MusicalityScore:
     call_response_relatedness: float
     singability: float
     phrasing: float
+    register_usage: float
     overall: float
 
 
-def musicality_score(notes: list, chord_idx: int, seed_phrase: list, weights: dict = None) -> MusicalityScore:
+def musicality_score(
+    notes: list, chord_idx: int, seed_phrase: list, register: Tuple[int, int], weights: dict = None
+) -> MusicalityScore:
     """weights, if given, overrides DEFAULT_WEIGHTS for the overall combination
     only -- every sub-score is still computed and reported regardless (a metric
     "turned off" by setting its weight to 0.0 is still visible on the returned
     MusicalityScore, just not counted toward overall). Phase 13, DESIGN.md §11:
     the first per-session/per-gesture configuration point for the critic --
     see ensemble/sax.py's sax_generator for a live consumer (a director's
-    toggle_singability gesture zeroing this at runtime)."""
+    toggle_singability gesture zeroing this at runtime).
+
+    register (Phase 24): required, no sensible default exists (same reasoning
+    as chord_idx/seed_phrase having none) -- the active register bound
+    register_usage() needs, which this function never received before."""
     weights = weights if weights is not None else DEFAULT_WEIGHTS
     scores = {
         "tonal_conformity": tonal_conformity(notes, chord_idx),
@@ -502,6 +547,7 @@ def musicality_score(notes: list, chord_idx: int, seed_phrase: list, weights: di
         "call_response_relatedness": call_response_relatedness(seed_phrase, notes),
         "singability": singability(notes),
         "phrasing": phrasing(notes),
+        "register_usage": register_usage(notes, register),
     }
     overall = sum(scores[key] * weights.get(key, 0.0) for key in scores)
     return MusicalityScore(overall=overall, **scores)

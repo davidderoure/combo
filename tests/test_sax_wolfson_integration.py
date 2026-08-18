@@ -299,7 +299,7 @@ def test_search_picks_the_actual_highest_scoring_candidate():
     # chunk's data. Use the last 5 calls to match what's actually still exposed.
     last_chunk = candidates[-5:]
     recomputed_scores = [
-        musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall
         for seed_phrase, kwargs, notes in last_chunk
     ]
     assert recomputed_scores == sax_gen.last_candidate_scores
@@ -357,10 +357,62 @@ def test_phrasing_varies_across_real_candidates_and_reaches_selection():
         wolfson_phrase_generator.PhraseGenerator.generate = original
 
     last_chunk = candidates[-8:]
-    scored = [musicality_score(notes, kwargs["chord_idx"], seed_phrase) for seed_phrase, kwargs, notes in last_chunk]
+    scored = [musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER) for seed_phrase, kwargs, notes in last_chunk]
 
     phrasing_values = [s.phrasing for s in scored]
     assert len(set(round(p, 6) for p in phrasing_values)) > 1  # genuine variance, not degenerate
+
+    recomputed_overall = [s.overall for s in scored]
+    assert recomputed_overall == sax_gen.last_candidate_scores
+
+    second_chunk_start = 4 * BEATS_PER_BAR
+    functional_scale = _functional_tonic_scale(song, second_chunk_start)
+    keys = [
+        (-dissonance(notes, kwargs["chord_idx"], extra_tolerated=functional_scale), motif_adherence(notes, []), score.overall)
+        for (seed_phrase, kwargs, notes), score in zip(last_chunk, scored)
+    ]
+    winner_notes = last_chunk[keys.index(max(keys))][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
+def test_register_usage_varies_across_real_candidates_and_reaches_selection():
+    """Phase 24: same proof as test_phrasing_varies_across_real_candidates_and_
+    reaches_selection above, for the new register_usage sub-score -- real
+    candidates in one chunk show genuine variance (not degenerate/constant),
+    and the winner identified via the REAL lexicographic selection key
+    (-dissonance, motif_adherence, overall) matches what sax_generator
+    actually dispensed."""
+    from ensemble.critic import dissonance, motif_adherence, musicality_score
+    from ensemble.sax import _functional_tonic_scale
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        song = build_slow_song()
+        timeline = Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    last_chunk = candidates[-8:]
+    scored = [musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER) for seed_phrase, kwargs, notes in last_chunk]
+
+    register_usage_values = [s.register_usage for s in scored]
+    assert len(set(round(r, 6) for r in register_usage_values)) > 1  # genuine variance, not degenerate
 
     recomputed_overall = [s.overall for s in scored]
     assert recomputed_overall == sax_gen.last_candidate_scores
@@ -424,10 +476,10 @@ def test_search_never_does_worse_than_a_single_draw():
         return candidates[:n_candidates]  # first chunk only
 
     single_seed_phrase, single_kwargs, single_notes = first_chunk_candidates(1)[0]
-    single_score = musicality_score(single_notes, single_kwargs["chord_idx"], single_seed_phrase).overall
+    single_score = musicality_score(single_notes, single_kwargs["chord_idx"], single_seed_phrase, SAX_REGISTER).overall
 
     searched_best = max(
-        musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall
         for seed_phrase, kwargs, notes in first_chunk_candidates(8)
     )
 
@@ -513,7 +565,7 @@ def test_search_with_a_motif_target_prefers_higher_adherence_over_higher_overall
         (
             -dissonance(notes, kwargs["chord_idx"]),
             motif_adherence(notes, motif_targets),
-            musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall,
+            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall,
         )
         for seed_phrase, kwargs, notes in last_chunk
     ]
@@ -594,7 +646,7 @@ def test_search_prefers_lower_dissonance_even_without_a_motif_target():
     last_chunk = candidates[-8:]
 
     recomputed = [
-        (-dissonance(notes, kwargs["chord_idx"]), musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall)
+        (-dissonance(notes, kwargs["chord_idx"]), musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall)
         for seed_phrase, kwargs, notes in last_chunk
     ]
     best_key = max(recomputed)
@@ -672,7 +724,7 @@ def test_dissonance_mode_disabled_reverts_to_overall_only_selection():
     last_chunk = candidates[-8:]
 
     overall_only = [
-        (motif_adherence(notes, []), musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall)
+        (motif_adherence(notes, []), musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall)
         for seed_phrase, kwargs, notes in last_chunk
     ]
     best_overall_only = max(overall_only)
@@ -734,7 +786,7 @@ def test_credit_resolved_tension_reaches_real_selection():
     recomputed = [
         (
             -dissonance(notes, kwargs["chord_idx"], extra_tolerated=functional_scale, credit_resolved_tension=True),
-            musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall,
+            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall,
         )
         for seed_phrase, kwargs, notes in last_chunk
     ]
@@ -818,7 +870,7 @@ def test_functional_context_reaches_real_selection_over_the_ii_chord():
         (
             -dissonance(notes, dm7_idx, extra_tolerated=functional_scale),
             motif_adherence(notes, []),
-            musicality_score(notes, dm7_idx, seed_phrase).overall,
+            musicality_score(notes, dm7_idx, seed_phrase, SAX_REGISTER).overall,
         )
         for seed_phrase, kwargs, notes in first_chunk
     ]

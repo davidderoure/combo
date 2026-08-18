@@ -91,34 +91,59 @@ to a string of U/D/S compared by edit distance; a striking, unplanned overlap wi
 exact U/D/S vocabulary for an unrelated purpose), and Wolfson's own ported bias
 layers, three of which are repurposed from generation-time sampling biases into
 retrospective scoring functions (singability's bell curve, voice-leading's
-chord-tone resolution). All six metrics (`tonal_conformity`, `contour_smoothness`,
+chord-tone resolution). All seven metrics (`tonal_conformity`, `contour_smoothness`,
 `repetition`, `call_response_relatedness`, `singability`, `phrasing` — Phase 23,
-below) are pure, deterministic functions needing no model inference — the first
-sax-adjacent test file since Phase 8 that's fully testable without `sax_best.pt`.
-`phrasing` is the only one of the six that looks at raw notes (including
-`REST_PITCH` sentinels) rather than the `_real_notes()`-filtered view every other
-metric uses — prompted directly by a listening-test observation ("the solos are
-not speaking in 'sentences' with gaps in between") distinct from the dissonance
-thread: it measures the fraction of a chunk's total duration spent in a genuine
-rest (`phrase_generator.py`'s own `_inject_rests` already splices these in,
-bell-curve-weighted toward the phrase midpoint but capped at
-`REST_MAX_PROBABILITY=0.15`), scored via the same bell-curve treatment as
-`singability`, peaking at an empirically-grounded target (40 real 4-bar chunks
-had mean breath fraction 0.129, median 0.124 — the target sits close to that
-natural centre, nudged slightly higher to push selection toward a bit more
-breath than the unweighted default). Needed **no changes to `ensemble/sax.py`
-at all** — `sax_generator`'s selection key already reads `musicality_score(...)
-.overall` generically, so the new sub-score flows into real selection through
-the existing weighted-sum mechanism the moment it's added to `DEFAULT_WEIGHTS`
-(rebalanced to six keys summing to 1.0, same placeholder status as every other
-weight). Deliberately not a separate "sentence count" measure on top of the
-breath fraction — a possible future refinement, not attempted. This is one
-piece of a larger "beginner vs advanced" idea from the same listening test
-(register range, deliberate tension-and-resolution — Phase 22 — and side-
-slipping); a much bigger, explicitly deferred idea from the same discussion is
-a whole-solo *narrative-arc* critic (intro/tension/resolution across many
-chunks, not one) — genuinely different in kind, since every critic function
-today scores a single chunk in isolation, not a performance. MIDI input is now unified
+`register_usage` — Phase 24, below) are pure, deterministic functions needing no
+model inference — the first sax-adjacent test file since Phase 8 that's fully
+testable without `sax_best.pt`. `phrasing` is the only one of the seven that looks
+at raw notes (including `REST_PITCH` sentinels) rather than the
+`_real_notes()`-filtered view every other metric uses — prompted directly by a
+listening-test observation ("the solos are not speaking in 'sentences' with gaps
+in between") distinct from the dissonance thread: it measures the fraction of a
+chunk's total duration spent in a genuine rest (`phrase_generator.py`'s own
+`_inject_rests` already splices these in, bell-curve-weighted toward the phrase
+midpoint but capped at `REST_MAX_PROBABILITY=0.15`), scored via the same
+bell-curve treatment as `singability`, peaking at an empirically-grounded target
+(40 real 4-bar chunks had mean breath fraction 0.129, median 0.124 — the target
+sits close to that natural centre, nudged slightly higher to push selection
+toward a bit more breath than the unweighted default). Needed **no changes to
+`ensemble/sax.py` at all** — `sax_generator`'s selection key already reads
+`musicality_score(...).overall` generically, so the new sub-score flows into
+real selection through the existing weighted-sum mechanism the moment it's added
+to `DEFAULT_WEIGHTS`. Deliberately not a separate "sentence count" measure on top
+of the breath fraction — a possible future refinement, not attempted.
+
+`register_usage` (Phase 24) closes another listening-test gap: "not much range
+of the instrument is being used. But on reflection, this is correct for
+beginners." Measures the fraction of the active `register`'s width spanned by a
+chunk's IN-REGISTER real notes only — checked directly, not assumed:
+`musicality_score` scores the model's RAW candidate output, before
+`_split_phrase_into_bars` clips out-of-register pitches for playback, and 13 of
+40 real chunks had at least one out-of-register note (Wolfson's own trained
+pitch vocabulary is MIDI 44-93, wider than any `register` passed in) — a
+raw-span measurement would sometimes reward spread that never actually sounds.
+Deliberately **not** a bell curve around a target the way `phrasing`/`singability`
+are: there's no clear "too much range" complaint the way there is for breath —
+`register` itself already caps what's appropriate for the chosen skill level (a
+call-site choice), and `contour_smoothness` already penalises erratic wide leaps
+separately — so this is a monotonic "use more of what you're given" reward
+instead. No separate beginner/advanced mode either: the skill-level distinction
+lives entirely in which `register` the caller passes to `sax_generator` (already
+real), not in the metric's own shape. Unlike `phrasing`, this one DID need a
+small `ensemble/sax.py` change — `musicality_score()` gained a new required
+`register` parameter (no sensible default, same as `chord_idx`/`seed_phrase`),
+rippling through every existing call site (14 total, across `ensemble/sax.py`
+and both critic/integration test files) — expected, mechanical fallout, not a
+regression. `DEFAULT_WEIGHTS` rebalanced to seven keys.
+
+Register/phrasing/tension-and-resolution (Phases 22-24) are three pieces of a
+larger "beginner vs advanced" idea from the same listening-test discussion; side-
+slipping and an actual call-site register-narrowing switch (vs. today's single
+`register` bound) remain explicitly open. A much bigger, explicitly deferred idea
+from the same discussion is a whole-solo *narrative-arc* critic (intro/tension/
+resolution across many chunks, not one) — genuinely different in kind, since
+every critic function today scores a single chunk in isolation, not a
+performance. MIDI input is now unified
 (Phase 13): checking a specific request (a director should be able to use the
 same interface a performer does, "dual control car") surfaced a general
 principle — **role determines destination, not recognition capability**. Checked

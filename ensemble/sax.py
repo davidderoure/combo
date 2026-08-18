@@ -469,7 +469,9 @@ def sax_generator(
                     motif_targets=motif_targets,
                     motif_strength=DEFAULT_MOTIF_STRENGTH if motif_targets else 0.0,
                 )
-                candidate_score = musicality_score(candidate_notes, chord_idx, seed_phrase, weights=critic_weights)
+                candidate_score = musicality_score(
+                    candidate_notes, chord_idx, seed_phrase, register, weights=critic_weights
+                )
                 candidate_scores.append(candidate_score.overall)
                 # (-dissonance, adherence, overall) lexicographic key: badness
                 # checked FIRST (negated so max() prefers the LOWEST dissonance),
