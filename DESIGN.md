@@ -269,17 +269,43 @@ the `("T","T")` collision originally): fires only on two genuinely separate
 rests with nothing between them, not on a rest interrupted by a note or on
 ordinary varied playing. `dissonance()` is still computed and logged every
 chunk-build regardless of the toggle — only whether it drives selection is
-gated. `out_of_key_check.py` updated to use `_dissonance_scale` (not the
+gated. `out_of_key_check.py` updated to use `dissonance_scale` (not the
 plain scale) so its own report matches what selection actually judges against
 — two more runs after Lever A landed: 4.4% (65/1485) then 1.2% (16/1374),
 down from Phase 19's 3.2-4.2%, and the original "E natural over F7" example
-no longer appears at all — simply in-scale now, not merely excused. Still
-explicitly deferred, named again rather than lost: the functional-context
-technique David flagged for later — over a fast-moving diatonic sequence like
-vi-ii-V-I, an improviser can often simplify and just play the tonic's scale
-throughout. `dissonance`/`musicality_score` only ever see one `chord_idx`
-today, no chord-sequence look-ahead/behind at all — a real architectural gap,
-not a small follow-on like the other two levers were. All with passing tests.
+no longer appears at all — simply in-scale now, not merely excused. Two more
+levers followed (Phase 21), closing the architectural gap named above.
+**Tritone/b5 substitution** (Lever D): checked directly before building it,
+not assumed — the first instinct, unioning the WHOLE scale of the tritone-
+substitute dominant (mirroring Lever A's pattern), saturates the metric
+almost completely: F7's own widened scale is 8 notes, its substitute B7's
+widened scale is another 8, and their union is all 12 pitch classes, since a
+tritone is the most harmonically distant interval and two mixolydian-family
+scales that far apart share almost nothing. So `dissonance_scale` (renamed
+public — `ensemble/sax.py` now calls it directly, the first time a
+`critic.py` helper is needed by production code, not just tests/tooling)
+instead tolerates a SINGLE extra pitch class for dominant chords — the
+tritone from the root — matching exactly what David named ("a b5
+substitution," a specific color tone, not "the whole substitute chord is
+valid"). **ii-V-I simplification** (Lever E): new `ensemble/sax.py` functions
+`_ii_v_i_target`/`_functional_tonic_scale` check whether the current bar
+could be the ii, V, or I of a textbook major ii-V-I (root motion by
+descending fifths, qualities minor/dominant/major — Wolfson's own 4-class
+mapping), using `Song.chord_at`'s cyclic lookup (verified directly to never
+raise, even near a chart's boundary) to look 1-2 bars ahead/behind. If
+matched, the target I chord's own `dissonance_scale` is unioned in via a new
+`extra_tolerated` parameter on `dissonance()` (default empty, reproducing
+Phase 20 exactly for every existing call site). Verified numerically before
+trusting it composes safely: D-dorian (the ii of a C ii-V-I) and
+C-major-widened differ by exactly one pitch class (the b6) — diatonically
+related scales overlap almost entirely, unlike the tritone case, which is
+why Lever E can safely union a WHOLE scale while Lever D cannot. A real
+selection-behaviour test (spy-and-recompute, not just checking the pure
+functions in isolation) confirms the extra tolerance actually reaches
+`sax_generator`'s selection over a genuine Dm7-G7-Cmaj7 chart. Explicitly
+deferred, named rather than lost: a vi-ii-V-I (four-chord) extension, a
+minor-tonic ii-V-i variant, and sub-bar-granular chord sequences (more than
+one chord change per bar). All with passing tests.
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a

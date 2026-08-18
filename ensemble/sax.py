@@ -118,7 +118,7 @@ from typing import List, Optional, Tuple
 
 from song.chord import Chord
 
-from .critic import DEFAULT_WEIGHTS, dissonance, motif_adherence, musicality_score
+from .critic import DEFAULT_WEIGHTS, dissonance, dissonance_scale, motif_adherence, musicality_score
 from .memory import RehearsalMemory
 from .timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from .voice import Generator
@@ -179,6 +179,54 @@ def _bars_until_chord_change(song, start_beat: float, max_bars: int) -> int:
         if song.chord_at(start_beat + offset * BEATS_PER_BAR) != starting_chord:
             return offset
     return max_bars
+
+
+def _ii_v_i_target(song, ii_beat: float) -> Optional[int]:
+    """Checks whether the chords at ii_beat, ii_beat+BEATS_PER_BAR, and
+    ii_beat+2*BEATS_PER_BAR form a textbook major ii-V-I: roots descending by
+    fifths (+5 semitones mod 12 at each step) and qualities minor/dominant/
+    major -- Wolfson's own 4-class mapping, already the right granularity
+    (it already collapses m7/m9/m6 into one minor class, 7/9/13/alt into one
+    dominant class, maj7/6/maj9 into one major class). Returns the I chord's
+    chord_idx if matched, else None. Bar-granular only (checks downbeat
+    chords at bar boundaries) -- a real, honest limit on a chart with faster
+    harmonic rhythm (more than one chord change per bar), same category of
+    limit _bars_until_chord_change's own docstring already names for
+    blues_in_f.chart. song.chord_at is cyclic (Changes.chord_at wraps mod
+    total_beats, verified directly -- never raises), so look-ahead/
+    look-behind near a chart's boundary is always safe."""
+    ii_idx = chord_to_wolfson_index(song.chord_at(ii_beat))
+    v_idx = chord_to_wolfson_index(song.chord_at(ii_beat + BEATS_PER_BAR))
+    i_idx = chord_to_wolfson_index(song.chord_at(ii_beat + 2 * BEATS_PER_BAR))
+    ii_root, ii_qual = ii_idx // N_QUALITIES, ii_idx % N_QUALITIES
+    v_root, v_qual = v_idx // N_QUALITIES, v_idx % N_QUALITIES
+    i_root, i_qual = i_idx // N_QUALITIES, i_idx % N_QUALITIES
+    if ii_qual != QUAL_MINOR or v_qual != QUAL_DOM or i_qual != QUAL_MAJOR:
+        return None
+    if v_root != (ii_root + 5) % 12 or i_root != (v_root + 5) % 12:
+        return None
+    return i_idx
+
+
+def _functional_tonic_scale(song, bar_start: float) -> frozenset:
+    """Extra pitch classes to tolerate at bar_start from simplifying a
+    recognised ii-V-I to the tonic (Phase 21, Lever E -- "look into how we
+    can do the II-V-I simplification... good for teaching"): checks whether
+    bar_start could be the ii, V, or I bar of such a pattern (three
+    hypotheses, using _ii_v_i_target's cyclic lookback/lookahead), and if
+    matched, unions in the target I chord's own dissonance_scale (composing
+    with Lever A/D automatically -- e.g. the V chord's own widened scale
+    already covers most of the target key, so this mainly adds real
+    tolerance at the ii position, checked directly: D-dorian and
+    C-major-widened differ by exactly one pitch class). A vi-ii-V-I
+    (four-chord) extension and a minor-tonic ii-V-i variant are real,
+    reasonable follow-ons -- deliberately not attempted here, named rather
+    than silently out of reach."""
+    for offset in (0.0, -BEATS_PER_BAR, -2 * BEATS_PER_BAR):
+        target = _ii_v_i_target(song, bar_start + offset)
+        if target is not None:
+            return dissonance_scale(target)
+    return frozenset()
 
 
 def _split_phrase_into_bars(
@@ -298,6 +346,15 @@ def sax_generator(
     behaviour, unchanged) because David asked specifically about ordinary
     melodic/singable soloing, not because avoidance is always correct.
 
+    What counts as tolerated is itself context-aware (Phase 21):
+    _functional_tonic_scale checks whether the current bar is the ii, V, or I
+    of a recognised major ii-V-I, and if so unions the target I chord's own
+    dissonance_scale in via dissonance()'s extra_tolerated parameter, the
+    "simplify to the tonic" technique real players use. Computed once per
+    chunk (doesn't depend on candidate notes), same timing as motif_targets.
+    A vi-ii-V-I extension and minor-tonic ii-V-i variant are real, deliberate
+    scope-cuts, not attempted here.
+
     motif_recall_candidates, if given, overrides n_candidates specifically for
     a chunk that has a non-empty motif_targets — more search shots make it far
     more likely at least one candidate actually lands the motif, justified by
@@ -360,6 +417,7 @@ def sax_generator(
             since_beat = max(0, bar_index - lookback_bars) * BEATS_PER_BAR
             seed_phrase = _build_seed_phrase(timeline, target_voice_id, since_beat, bar_start)
             chord_idx = chord_to_wolfson_index(song.chord_at(bar_start))
+            functional_scale = _functional_tonic_scale(song, bar_start)
 
             motif_targets = []
             if memory is not None:
@@ -397,7 +455,7 @@ def sax_generator(
                 # even when dissonance_mode is disabled (Phase 20) -- cheap, and
                 # keeps dissonance_log meaningful regardless of what's currently
                 # driving selection -- only whether it counts in the key is gated.
-                d = dissonance(candidate_notes, chord_idx)
+                d = dissonance(candidate_notes, chord_idx, extra_tolerated=functional_scale)
                 key = (
                     -d if dissonance_mode["enabled"] else 0.0,
                     motif_adherence(candidate_notes, motif_targets),

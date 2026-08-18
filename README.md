@@ -394,7 +394,7 @@ respectively were genuine passing tones, a real, repeatable majority rather
 than unexplained clashes.
 
 **The other two levers, built together** (Phase 20). Widening the scale
-`dissonance` itself judges against: `_dissonance_scale` (`ensemble/critic.py`)
+`dissonance` itself judges against: `dissonance_scale` (`ensemble/critic.py`)
 unions the plain per-quality mode with a named jazz-standard "richer" variant
 already sitting in `scales.py`'s `MODES` table but never wired to anything —
 `mixolydian | bebop_dom` for dominant chords (the literal "E natural over F7"
@@ -416,16 +416,43 @@ caught the `("T","T")` collision: fires only on two genuinely separate rests
 with nothing between them, never on ordinary playing. `dissonance()` is still
 computed and logged every chunk regardless of the toggle — only whether it
 drives selection is gated. `out_of_key_check.py` updated to use
-`_dissonance_scale` (not the plain scale) so its own report matches what
+`dissonance_scale` (not the plain scale) so its own report matches what
 selection actually judges against: two more runs after the widened scale
 landed — 4.4% (65/1485) then 1.2% (16/1374), down from 3.2-4.2% — and the
 original "E natural over F7" example no longer appears at all, simply in-scale
-now rather than merely excused. Still explicitly deferred: the functional-
-context technique David flagged for later — over a fast-moving diatonic
-sequence like vi-ii-V-I, simplify and just play the tonic's scale throughout.
-`dissonance`/`musicality_score` only ever see one `chord_idx`, no chord-
-sequence look-ahead/behind at all — a real architectural gap, not a small
-follow-on like the other two levers were.
+now rather than merely excused.
+
+**Functional context: ii-V-I simplification and tritone/b5 substitution**
+(Phase 21) — the architectural gap named above, closed for two named,
+teachable techniques. **Tritone/b5 substitution**: checked directly before
+building it, not assumed — the first instinct (union the WHOLE scale of the
+tritone-substitute dominant, mirroring Lever A) saturates the metric almost
+completely: F7's own widened scale is 8 notes, its substitute B7's is
+another 8, and their union is all 12 pitch classes, since a tritone is the
+most harmonically distant interval and two mixolydian-family scales that far
+apart share almost nothing. So `dissonance_scale` (renamed public —
+`ensemble/sax.py` now calls it directly, the first time a `critic.py` helper
+is needed by production code, not just tests/tooling) instead tolerates a
+SINGLE extra pitch class for dominant chords — the tritone from the root —
+matching exactly what David named ("a b5 substitution," a specific color
+tone, not "the whole substitute chord is valid"). **ii-V-I simplification**:
+new `ensemble/sax.py` functions `_ii_v_i_target`/`_functional_tonic_scale`
+check whether the current bar could be the ii, V, or I of a textbook major
+ii-V-I (root motion by descending fifths, qualities minor/dominant/major),
+using `Song.chord_at`'s cyclic lookup (verified directly to never raise, even
+near a chart's boundary) to look 1-2 bars ahead/behind — if matched, the
+target I chord's own `dissonance_scale` is unioned in via a new
+`extra_tolerated` parameter on `dissonance()` (default empty, reproducing
+Phase 20 exactly for every existing call site). Verified numerically before
+trusting it composes safely with Lever A/D: D-dorian (the ii of a C ii-V-I)
+and C-major-widened differ by exactly one pitch class (the b6) — diatonically
+related scales overlap almost entirely, unlike the tritone case, which is
+why this lever can safely union a WHOLE scale while tritone-sub cannot. A
+real selection-behaviour test (spy-and-recompute) confirms the extra
+tolerance actually reaches `sax_generator`'s selection over a genuine
+Dm7-G7-Cmaj7 chart. Explicitly deferred: a vi-ii-V-I (four-chord) extension,
+a minor-tonic ii-V-i variant, and sub-bar-granular chord sequences (more than
+one chord change per bar).
 
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
@@ -510,7 +537,9 @@ suite is no longer sub-second once torch is imported.
   `LiveGestureQueue`), `sax.py` (DESIGN.md §12 — real generation for the sax voice:
   `chord_to_wolfson_index`, `sax_generator`, `_bars_until_chord_change` +
   `_split_phrase_into_bars` for the multi-bar planning buffer, `_pick_achievable_motif`
-  for choosing a recalled motif that's actually reachable, Phase 17), `memory.py`
+  for choosing a recalled motif that's actually reachable (Phase 17), `_ii_v_i_target` +
+  `_functional_tonic_scale` for the ii-V-I "simplify to the tonic" technique
+  (Phase 21)), `memory.py`
   (DESIGN.md §12 — `RehearsalMemory`, the first state that persists across separate
   `Session.generate()` calls), `critic.py` (DESIGN.md §11/§12 — a musicality
   critic: `tonal_conformity`, `contour_smoothness`, `repetition`, `motif_adherence`
@@ -519,7 +548,8 @@ suite is no longer sub-second once torch is imported.
   WORSE, unlike every other function here; a badness signal for selection to
   minimise, not a goodness signal blended into `overall`; excuses genuine chromatic
   passing tones since Phase 19, `_is_passing_tone`; judges against a widened,
-  jazz-aware scale since Phase 20, `_dissonance_scale`), `call_response_relatedness`,
+  jazz-aware scale since Phase 20/21, `dissonance_scale` — public since Phase 21,
+  `ensemble/sax.py` calls it directly), `call_response_relatedness`,
   `singability`, `musicality_score`; every function pure and deterministic, no
   model inference), `roles.py` (DESIGN.md §2 — the
   same-instrument-doubling slice of role assignment: `default_accompanist_roles`,

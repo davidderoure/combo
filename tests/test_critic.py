@@ -9,13 +9,14 @@ import pytest
 from ensemble.critic import (
     DEFAULT_WEIGHTS,
     _contour_string,
-    _dissonance_scale,
     _is_passing_tone,
     _levenshtein,
     _semitones_to_scale,
+    _widened_mode_scale,
     call_response_relatedness,
     contour_smoothness,
     dissonance,
+    dissonance_scale,
     motif_adherence,
     musicality_score,
     repetition,
@@ -119,13 +120,13 @@ def test_dissonance_is_the_fraction_of_clashing_notes():
     # clash. Deliberately NOT a stepwise run -- see the _is_passing_tone tests
     # below for that case specifically. Uses C# and D#, not G#: G# is inside
     # bebop_major's widened C-major reference (Phase 20's own b6 passing
-    # tone), so it wouldn't count as a clash at all -- see _dissonance_scale.
+    # tone), so it wouldn't count as a clash at all -- see dissonance_scale.
     notes = notes_from_pitches([60, 61, 67, 63])
     assert dissonance(notes, C_MAJOR) == 0.5
 
 
 # ---------------------------------------------------------------------------
-# _dissonance_scale -- Phase 20, Lever A: widen the reference for dominant/
+# dissonance_scale -- Phase 20, Lever A: widen the reference for dominant/
 # major chords to include a named bebop passing tone; minor/diminished are a
 # deliberate scope-cut, not an oversight.
 # ---------------------------------------------------------------------------
@@ -135,7 +136,7 @@ def test_dissonance_scale_dominant_includes_the_bebop_maj7_passing_tone():
     # F7: plain mixolydian is {5,7,9,10,0,2,3}; bebop_dom adds the maj7 (pc 4,
     # E natural) -- the literal "E natural over F7" case that started this.
     plain = scale_pitch_classes(chord_root(F_DOM), chord_to_mode(F_DOM))
-    widened = _dissonance_scale(F_DOM)
+    widened = dissonance_scale(F_DOM)
     assert 4 not in plain
     assert 4 in widened
     assert plain <= widened  # nothing previously in-scale is lost
@@ -144,7 +145,7 @@ def test_dissonance_scale_dominant_includes_the_bebop_maj7_passing_tone():
 def test_dissonance_scale_major_includes_the_bebop_b6_passing_tone():
     # C major: plain ionian is {0,2,4,5,7,9,11}; bebop_major adds the b6 (pc 8).
     plain = scale_pitch_classes(chord_root(C_MAJOR), chord_to_mode(C_MAJOR))
-    widened = _dissonance_scale(C_MAJOR)
+    widened = dissonance_scale(C_MAJOR)
     assert 8 not in plain
     assert 8 in widened
     assert plain <= widened
@@ -152,12 +153,12 @@ def test_dissonance_scale_major_includes_the_bebop_b6_passing_tone():
 
 def test_dissonance_scale_minor_is_unchanged():
     plain = scale_pitch_classes(chord_root(D_MINOR), chord_to_mode(D_MINOR))
-    assert _dissonance_scale(D_MINOR) == plain
+    assert dissonance_scale(D_MINOR) == plain
 
 
 def test_dissonance_scale_diminished_is_unchanged():
     plain = scale_pitch_classes(chord_root(G_DIM), chord_to_mode(G_DIM))
-    assert _dissonance_scale(G_DIM) == plain
+    assert dissonance_scale(G_DIM) == plain
 
 
 def test_dissonance_no_longer_flags_the_bebop_passing_tone_at_all():
@@ -166,6 +167,54 @@ def test_dissonance_no_longer_flags_the_bebop_passing_tone_at_all():
     # the widened scale, not flagged as dissonant in the first place.
     notes = notes_from_pitches([65, 64, 65])  # F, E, F -- E approached/left by leap either way is irrelevant now
     assert dissonance(notes, F_DOM) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# dissonance_scale -- Phase 21, Lever D: tritone/b5 substitution. A SINGLE
+# extra pitch class for dominant chords, not a whole substitute scale --
+# checked directly that unioning a whole scale saturates the metric (see
+# dissonance_scale's own docstring for the F7/B7 arithmetic).
+# ---------------------------------------------------------------------------
+
+
+def test_widened_mode_scale_matches_dissonance_scale_minus_the_tritone_term():
+    # Regression check on the Phase 21 refactor: _widened_mode_scale alone
+    # (Lever A only) must be exactly what dissonance_scale had BEFORE the
+    # tritone term was added, for every quality.
+    for chord_idx in (C_MAJOR, F_DOM, D_MINOR, G_DIM):
+        plain_widened = _widened_mode_scale(chord_idx)
+        if chord_idx % 4 == QUAL_DOM:
+            tritone_pc = (chord_root(chord_idx) + 6) % 12
+            assert dissonance_scale(chord_idx) == plain_widened | {tritone_pc}
+        else:
+            assert dissonance_scale(chord_idx) == plain_widened
+
+
+def test_dissonance_scale_dominant_gains_exactly_one_tritone_pitch_class():
+    # F7 (root 5): tritone pitch class is (5+6)%12 = 11 (B). Checked as a
+    # set DIFFERENCE, not just "contains 11" -- proves this is a single-note
+    # addition on top of Lever A, not a wider one (the whole-scale approach
+    # that was checked and rejected -- see dissonance_scale's docstring).
+    lever_a_only = _widened_mode_scale(F_DOM)
+    with_tritone = dissonance_scale(F_DOM)
+    assert with_tritone - lever_a_only == {11}
+
+
+def test_dissonance_scale_major_minor_diminished_unaffected_by_tritone_term():
+    # The tritone term is quality-gated to QUAL_DOM only.
+    assert dissonance_scale(C_MAJOR) == _widened_mode_scale(C_MAJOR)
+    assert dissonance_scale(D_MINOR) == _widened_mode_scale(D_MINOR)
+    assert dissonance_scale(G_DIM) == _widened_mode_scale(G_DIM)
+
+
+def test_dissonance_extra_tolerated_excuses_a_note_only_when_supplied():
+    # F# (pc 6) over F7 is not in dissonance_scale(F_DOM) at all (6 is
+    # neither in the widened mode nor the tritone pitch 11) -- a real clash,
+    # excused only when explicitly supplied via extra_tolerated.
+    notes = notes_from_pitches([66])  # F#4
+    assert 6 not in dissonance_scale(F_DOM)
+    assert dissonance(notes, F_DOM) == 1.0
+    assert dissonance(notes, F_DOM, extra_tolerated=frozenset({6})) == 0.0
 
 
 # ---------------------------------------------------------------------------

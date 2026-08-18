@@ -7,9 +7,12 @@ from collections import Counter
 from song import Changes, ChangesEvent, Section, Song
 from song.chord import Chord, _QUALITY_ALIASES
 
+from ensemble.critic import dissonance_scale
 from ensemble.sax import (
     _bars_until_chord_change,
     _build_seed_phrase,
+    _functional_tonic_scale,
+    _ii_v_i_target,
     _pick_achievable_motif,
     _split_phrase_into_bars,
     chord_to_wolfson_index,
@@ -82,6 +85,37 @@ def test_bars_until_chord_change_finds_a_two_bar_hold():
 def test_bars_until_chord_change_caps_at_max_bars():
     song = _song_with_changes((Chord.parse("F7"), 16.0))  # one chord, 4 bars, no change ever
     assert _bars_until_chord_change(song, 0.0, max_bars=3) == 3
+
+
+def test_ii_v_i_target_matches_a_textbook_ii_v_i():
+    song = _song_with_changes((Chord.parse("Dm7"), 4.0), (Chord.parse("G7"), 4.0), (Chord.parse("Cmaj7"), 4.0))
+    assert _ii_v_i_target(song, 0.0) == chord_to_wolfson_index(Chord.parse("Cmaj7"))
+
+
+def test_ii_v_i_target_rejects_wrong_root_motion():
+    # Dm7-G7-Ebmaj7 -- qualities right, but the I chord's root doesn't
+    # continue the descending-fifths motion (V's root+5 semitones is C, not Eb).
+    song = _song_with_changes((Chord.parse("Dm7"), 4.0), (Chord.parse("G7"), 4.0), (Chord.parse("Ebmaj7"), 4.0))
+    assert _ii_v_i_target(song, 0.0) is None
+
+
+def test_ii_v_i_target_rejects_wrong_qualities():
+    # D7-G7-Cmaj7 -- root motion is right, but the "ii" is dominant, not minor.
+    song = _song_with_changes((Chord.parse("D7"), 4.0), (Chord.parse("G7"), 4.0), (Chord.parse("Cmaj7"), 4.0))
+    assert _ii_v_i_target(song, 0.0) is None
+
+
+def test_functional_tonic_scale_resolves_the_same_target_from_ii_v_or_i():
+    song = _song_with_changes((Chord.parse("Dm7"), 4.0), (Chord.parse("G7"), 4.0), (Chord.parse("Cmaj7"), 4.0))
+    target_scale = dissonance_scale(chord_to_wolfson_index(Chord.parse("Cmaj7")))
+    assert _functional_tonic_scale(song, 0.0) == target_scale  # bar_start is the ii
+    assert _functional_tonic_scale(song, BEATS_PER_BAR) == target_scale  # bar_start is the V
+    assert _functional_tonic_scale(song, 2 * BEATS_PER_BAR) == target_scale  # bar_start is the I
+
+
+def test_functional_tonic_scale_empty_when_nothing_recognisable_nearby():
+    song = _song_with_changes((Chord.parse("F7"), 4.0), (Chord.parse("Bb7"), 4.0), (Chord.parse("F7"), 4.0))
+    assert _functional_tonic_scale(song, 0.0) == frozenset()
 
 
 def test_split_phrase_into_bars_skips_rest_sentinels():

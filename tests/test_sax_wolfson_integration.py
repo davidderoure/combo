@@ -601,3 +601,79 @@ def test_dissonance_mode_disabled_reverts_to_overall_only_selection():
     # directly rather than assumed.
     recomputed_dissonances = [dissonance(notes, kwargs["chord_idx"]) for _sp, kwargs, notes in last_chunk]
     assert sax_gen.dissonance_log[-1] == recomputed_dissonances[overall_only.index(best_overall_only)]
+
+
+def build_ii_v_i_song() -> Song:
+    """A genuine 1-bar-per-chord Dm7-G7-Cmaj7 turnaround -- bar-granular,
+    matching _ii_v_i_target's own bar-level lookup exactly, so bar 0 (the ii)
+    is unambiguously recognised."""
+    return Song(
+        title="ii-V-I", changes=Changes([
+            ChangesEvent(Chord.parse("Dm7"), BEATS_PER_BAR),
+            ChangesEvent(Chord.parse("G7"), BEATS_PER_BAR),
+            ChangesEvent(Chord.parse("Cmaj7"), BEATS_PER_BAR),
+        ]),
+        form=[Section("A", 4)], tempo_bpm=120,
+    )
+
+
+def test_functional_context_reaches_real_selection_over_the_ii_chord():
+    """Phase 21, Lever E: a real, non-trivial extra tolerance is added at the
+    ii chord (checked directly: functional_scale is a STRICT superset of
+    dissonance_scale(Dm7's own chord_idx) alone -- D-dorian is missing
+    exactly the b6 pc 8 that C-major-widened has, matching the hand
+    computation in dissonance_scale's own docstring), and the actual
+    dispensed candidate is the one selection -- using functional context --
+    actually picks, verified by recomputing the exact same key sax_generator
+    uses, not trusting its own bookkeeping (the Phase 8 postmortem's lesson,
+    applied again here)."""
+    from ensemble.critic import dissonance, dissonance_scale as critic_dissonance_scale, motif_adherence, musicality_score
+    from ensemble.sax import _functional_tonic_scale, chord_to_wolfson_index
+
+    song = build_ii_v_i_song()
+    dm7_idx = chord_to_wolfson_index(Chord.parse("Dm7"))
+    functional_scale = _functional_tonic_scale(song, 0.0)
+
+    # The real, non-trivial extra tolerance this phase claims to add.
+    assert functional_scale > critic_dissonance_scale(dm7_idx)
+    assert functional_scale - critic_dissonance_scale(dm7_idx) == {8}  # the b6, Ab
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=11)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    # bar 0 (the ii, Dm7) is its own chunk: chord changes every bar on this
+    # chart, so _bars_until_chord_change caps it at span_bars=1.
+    first_chunk = [c for c in candidates if c[1]["chord_idx"] == dm7_idx][:8]
+    assert len(first_chunk) == 8
+
+    recomputed = [
+        (
+            -dissonance(notes, dm7_idx, extra_tolerated=functional_scale),
+            motif_adherence(notes, []),
+            musicality_score(notes, dm7_idx, seed_phrase).overall,
+        )
+        for seed_phrase, kwargs, notes in first_chunk
+    ]
+    best_key = max(recomputed)
+    winner_notes = first_chunk[recomputed.index(best_key)][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and 0.0 <= e.start_beat < BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))

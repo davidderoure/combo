@@ -49,7 +49,7 @@ motion is surviving, and a solid majority of what's flagged as "out of key"
 now has a real melodic justification rather than being an unexplained clash.
 
 Phase 20 (Lever A) widened the scale `dissonance` itself judges against --
-this script now uses the SAME reference (`_dissonance_scale`, not the plain
+this script now uses the SAME reference (`dissonance_scale`, not the plain
 chord_to_mode scale) so its own report matches what selection is actually
 doing. Two more 5-loop runs after that: 4.4% (65/1485) then 1.2% (16/1374) --
 lower than Phase 19's 3.2-4.2%, and the bebop maj7-over-dominant example that
@@ -65,7 +65,7 @@ from collections import Counter
 from pathlib import Path
 
 from ensemble import MACHINE_SPEED, Session, Voice
-from ensemble.critic import _dissonance_scale, _is_passing_tone
+from ensemble.critic import _is_passing_tone, dissonance_scale
 from ensemble.memory import RehearsalMemory
 from ensemble.sax import chord_to_wolfson_index, sax_generator
 from song import parse_chart
@@ -117,10 +117,10 @@ def main() -> None:
         for idx, event in enumerate(sax_events):
             chord = song.chord_at(event.start_beat)
             chord_idx = chord_to_wolfson_index(chord)
-            # _dissonance_scale (Phase 20), not the plain chord_to_mode scale --
+            # dissonance_scale (Phase 20), not the plain chord_to_mode scale --
             # this is the same reference dissonance() actually judges against
             # now, so the report matches what selection is really doing.
-            scale = _dissonance_scale(chord_idx)
+            scale = dissonance_scale(chord_idx)
             pitch_class = event.pitch % 12
             total_notes += 1
             if pitch_class not in scale:

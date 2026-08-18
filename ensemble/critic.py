@@ -47,6 +47,7 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 
+from .wolfson.chords import N_QUALITIES, QUAL_DOM
 from .wolfson.encoding import dur_to_token
 from .wolfson.motifs import extract_interval_motifs
 from .wolfson.phrase_generator import REST_PITCH, SINGABLE_DUR_CENTER, SINGABLE_DUR_WIDTH
@@ -146,27 +147,55 @@ def _semitones_to_scale(pitch_class: int, scale: frozenset) -> int:
 _RICHER_MODE_FOR = {"ionian": "bebop_major", "mixolydian": "bebop_dom"}
 
 
-def _dissonance_scale(chord_idx: int) -> frozenset:
-    """The scale reference dissonance() judges against -- wider than
-    chord_to_mode's plain default. UNIONS the plain mode with a named
+def _widened_mode_scale(chord_idx: int) -> frozenset:
+    """Phase 20, Lever A: the plain chord_to_mode scale UNIONED with a named
     jazz-standard "richer" variant when one exists (nothing previously
     in-scale is lost, only real, named tensions gain tolerance) rather than
     replacing it -- e.g. mixolydian -> mixolydian | bebop_dom, recognising
     the maj7-as-passing-tone vocabulary over a dominant chord (the original
     "E natural over F7" example that started this). Minor and diminished
     have no comparably-named richer variant in ensemble/wolfson/scales.py's
-    MODES table -- not invented, a named scope-cut, not an oversight
-    (`altered`/`lydian_dom` are real, available options for a bigger,
-    separate reharm-substitution idea, not reached for here). Doesn't touch
-    scales.py (the ported file) or generation-time bias at all -- checked
-    directly, ensemble/sax.py never passes scale_pitch_classes into
-    PhraseGenerator.generate(), so this only affects how already-generated
-    notes are JUDGED, not how they're generated."""
+    MODES table -- not invented, a named scope-cut, not an oversight.
+    Factored out from dissonance_scale (Phase 21) so the tritone/b5
+    substitution term below can be layered on top without recursing into
+    itself."""
     root = chord_root(chord_idx)
     mode = chord_to_mode(chord_idx)
     scale = scale_pitch_classes(root, mode)
     richer = _RICHER_MODE_FOR.get(mode)
     return scale | scale_pitch_classes(root, richer) if richer else scale
+
+
+def dissonance_scale(chord_idx: int) -> frozenset:
+    """The scale reference dissonance() judges against. Public (not
+    _dissonance_scale) since Phase 21: ensemble/sax.py now calls this
+    directly (to compute a ii-V-I target's own widened scale for
+    _functional_tonic_scale) -- the first time a critic.py helper is needed
+    by production code outside this module, not just tests/tooling, so the
+    leading underscore (which signals "no external consumers expected") is
+    no longer honest.
+
+    Starts from _widened_mode_scale (Phase 20, Lever A) above. For a
+    DOMINANT chord, ALSO tolerates the single pitch class a tritone from the
+    root -- tritone/b5 substitution (Phase 21, Lever D): the specific,
+    named color tone real players use to evoke "playing the substitute"
+    (e.g. Gb over F7), not the substitute chord's whole scale. Checked
+    directly before choosing this, not assumed: unioning the FULL widened
+    scale of the tritone-substitute chord saturates the metric almost
+    completely -- F7's own widened scale is {0,2,3,4,5,7,9,10} (8 notes),
+    its substitute B7's widened scale is {1,3,4,6,8,9,10,11} (8 notes),
+    and their union is all 12 pitch classes, since a tritone is the most
+    harmonically distant interval -- two mixolydian-family scales that far
+    apart share almost nothing, so dissonance would never fire on a
+    dominant chord again. A single extra pitch class avoids that entirely
+    while still directly naming the technique David asked about ("a b5
+    substitution" -- a specific color tone, not "the whole substitute chord
+    is valid"). Doesn't touch scales.py (the ported file) or
+    generation-time bias -- see _widened_mode_scale's own note on that."""
+    scale = _widened_mode_scale(chord_idx)
+    if chord_idx % N_QUALITIES == QUAL_DOM:
+        scale = scale | {(chord_root(chord_idx) + 6) % 12}
+    return scale
 
 
 def _is_passing_tone(real_notes: list, i: int) -> bool:
@@ -192,7 +221,7 @@ def _is_passing_tone(real_notes: list, i: int) -> bool:
     return (prev_interval > 0 and next_interval > 0) or (prev_interval < 0 and next_interval < 0)
 
 
-def dissonance(notes: list, chord_idx: int) -> float:
+def dissonance(notes: list, chord_idx: int, extra_tolerated: frozenset = frozenset()) -> float:
     """Fraction of real notes that CLASH with the chord: pitch class out of
     scale and exactly DISSONANT_SEMITONE_DISTANCE semitones from the nearest
     in-scale pitch class -- found empirically, not assumed, by checking real
@@ -211,6 +240,14 @@ def dissonance(notes: list, chord_idx: int) -> float:
     directions) is a related, still-uncovered case, named as a deliberate
     scope-cut, not an oversight.
 
+    extra_tolerated (Phase 21): additional pitch classes to treat as in-scale,
+    on top of dissonance_scale(chord_idx)'s own chord-local widening (Lever
+    A/D). Default empty reproduces exactly Phase 20's behaviour -- this
+    module stays deliberately Song-agnostic (see module docstring), so it's
+    the CALLER's job to decide what extra context justifies tolerance (e.g.
+    ensemble/sax.py's _functional_tonic_scale, informed by the surrounding
+    chord sequence, which this module has no access to).
+
     Higher is worse, unlike every other function in this module -- this is a
     badness signal for selection to minimise (ensemble/sax.py), not a
     goodness signal to blend into MusicalityScore/DEFAULT_WEIGHTS below,
@@ -219,7 +256,7 @@ def dissonance(notes: list, chord_idx: int) -> float:
     real = _real_notes(notes)
     if not real:
         return 0.0
-    scale = _dissonance_scale(chord_idx)
+    scale = dissonance_scale(chord_idx) | extra_tolerated
     clashes = 0
     for i, n in enumerate(real):
         pc = n["pitch"] % 12
