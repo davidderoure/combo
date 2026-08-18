@@ -10,7 +10,9 @@ from pathlib import Path
 
 import pytest
 
+import wjd_corpus
 import ensemble.wolfson.phrase_generator as wolfson_phrase_generator
+from ensemble.corpus_motifs import CorpusMotifs
 from ensemble.director import Director, DirectorSignal, constant_director_source
 from ensemble.generators import chord_tone_generator
 from ensemble.memory import RehearsalMemory
@@ -30,6 +32,15 @@ SAX_REGISTER = (55, 79)
 pytestmark = pytest.mark.skipif(
     not WEIGHTS_PATH.exists(),
     reason=f"sax_best.pt not present at {WEIGHTS_PATH} — gitignored, copy it in manually, see README",
+)
+
+# Phase 29: a SECOND, additional skip condition -- only the corpus_familiarity
+# real-consumer tests need the WJD motif cache built (python wjd_corpus.py
+# --build), not every test in this file. Stacked on top of the module-level
+# pytestmark above (either skip reason applies independently).
+needs_corpus_cache = pytest.mark.skipif(
+    not wjd_corpus.CACHE_PATH.exists(),
+    reason=f"WJD corpus cache not present at {wjd_corpus.CACHE_PATH} — run 'python wjd_corpus.py --build' first",
 )
 
 
@@ -1061,3 +1072,218 @@ def test_non_modal_chart_passes_zero_modal_strength():
 
     assert modal_strengths
     assert all(ms == 0.0 for ms in modal_strengths)
+
+
+def test_corpus_none_reproduces_selection_without_it():
+    """Phase 29: corpus=None (the default) must be provably a no-op --
+    recompute the pre-Phase-29 3-term key (-dissonance, adherence, overall)
+    directly from real candidates and confirm it still picks the same winner
+    sax_generator actually dispensed, the same backward-compatibility proof
+    every earlier selection-key extension in this file has made. Needs no
+    corpus cache -- corpus=None never touches CorpusMotifs at all."""
+    from ensemble.critic import dissonance, motif_adherence, musicality_score
+    from ensemble.sax import chord_to_wolfson_index
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=9, corpus=None)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    f7_idx = chord_to_wolfson_index(Chord.parse("F7"))
+    first_chunk = candidates[:8]
+    assert len(first_chunk) == 8
+    assert all(kwargs["chord_idx"] == f7_idx for _sp, kwargs, _notes in first_chunk)
+
+    recomputed = [
+        (-dissonance(notes, f7_idx), motif_adherence(notes, []), musicality_score(notes, f7_idx, seed_phrase, SAX_REGISTER).overall)
+        for seed_phrase, kwargs, notes in first_chunk
+    ]
+    best_key = max(recomputed)
+    winner_notes = first_chunk[recomputed.index(best_key)][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+
+    first_chunk_span = 4 * BEATS_PER_BAR  # DEFAULT_PLAN_BARS=4
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and 0.0 <= e.start_beat < first_chunk_span
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
+@needs_corpus_cache
+def test_corpus_score_is_a_noop_when_chunk_is_not_bias_distorted():
+    """Phase 29: corpus IS provided here, but build_slow_song()'s single held
+    F7 chord with no RehearsalMemory (motif_targets always []) and modal=False
+    (the default) means is_bias_distorted is False for every chunk -- so
+    corpus_familiarity should never be computed/contribute, and selection
+    should match the plain 3-term key exactly, proving the "only bias-
+    distorted chunks" gate actually holds on real data, not just that it
+    reads correctly in ensemble/sax.py's source."""
+    from ensemble.critic import dissonance, motif_adherence, musicality_score
+    from ensemble.sax import chord_to_wolfson_index
+
+    corpus = CorpusMotifs(wjd_corpus.CACHE_PATH)
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=9, corpus=corpus)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    f7_idx = chord_to_wolfson_index(Chord.parse("F7"))
+    first_chunk = candidates[:8]
+    assert len(first_chunk) == 8
+
+    recomputed = [
+        (-dissonance(notes, f7_idx), motif_adherence(notes, []), musicality_score(notes, f7_idx, seed_phrase, SAX_REGISTER).overall)
+        for seed_phrase, kwargs, notes in first_chunk
+    ]
+    best_key = max(recomputed)
+    winner_notes = first_chunk[recomputed.index(best_key)][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+
+    first_chunk_span = 4 * BEATS_PER_BAR
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and 0.0 <= e.start_beat < first_chunk_span
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
+@needs_corpus_cache
+def test_corpus_familiarity_reaches_real_selection_on_a_recalled_motif_chunk():
+    """Phase 29: build_slow_song()'s SECOND chunk (DEFAULT_PLAN_BARS=4 over an
+    8-bar hold) gets a real, non-empty motif_targets from RehearsalMemory --
+    the same bias-distortion source as test_search_with_a_motif_target_
+    prefers_higher_adherence_over_higher_overall above -- so is_bias_distorted
+    is True and corpus_familiarity should actually enter the selection key.
+    Recomputes the FULL 4-term key (-dissonance, adherence, corpus_familiarity,
+    overall) using the real CorpusMotifs built from wjazzd.db, confirming the
+    dispensed candidate matches -- not just that corpus_familiarity computes a
+    sensible number in isolation (already covered in tests/test_critic.py),
+    but that it actually reaches real selection here."""
+    from ensemble.critic import corpus_familiarity, dissonance, motif_adherence, musicality_score
+    from ensemble.wolfson.chords import QUAL_DOM
+
+    corpus = CorpusMotifs(wjd_corpus.CACHE_PATH)
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        mem = RehearsalMemory()
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(
+            SAX_REGISTER, target_voice_id="bass", memory=mem, seed=3,
+            n_candidates=2, motif_recall_candidates=8, corpus=corpus,
+        )
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert len(candidates) == 10  # chunk 1: 2 candidates, chunk 2 (recall): 8
+    last_chunk = candidates[-8:]
+    motif_targets = last_chunk[0][1]["motif_targets"]
+    assert motif_targets != []  # the bias-distortion this test is actually about
+
+    recomputed = [
+        (
+            -dissonance(notes, kwargs["chord_idx"]),
+            motif_adherence(notes, motif_targets),
+            corpus_familiarity(notes, QUAL_DOM, corpus),
+            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall,
+        )
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
+    best_key = max(recomputed)
+    winner_notes = last_chunk[recomputed.index(best_key)][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+    second_chunk_start = 4 * BEATS_PER_BAR
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
+@needs_corpus_cache
+def test_corpus_familiarity_reaches_real_selection_on_a_modal_chart():
+    """Phase 29: the second half of is_bias_distorted's OR — song.modal=True
+    (Phase 27's modal_strength bias) also makes corpus_familiarity enter the
+    key, with no RehearsalMemory involved at all this time (motif_targets is
+    always [] here, isolating the modal half of the condition specifically)."""
+    from ensemble.critic import corpus_familiarity, dissonance, motif_adherence, musicality_score
+    from ensemble.sax import chord_to_wolfson_index
+    from ensemble.wolfson.chords import QUAL_DOM
+
+    corpus = CorpusMotifs(wjd_corpus.CACHE_PATH)
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        song = build_slow_song()
+        song.modal = True
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=13, corpus=corpus)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    f7_idx = chord_to_wolfson_index(Chord.parse("F7"))
+    first_chunk = candidates[:8]
+    assert len(first_chunk) == 8
+
+    recomputed = [
+        (
+            -dissonance(notes, f7_idx),
+            motif_adherence(notes, []),
+            corpus_familiarity(notes, QUAL_DOM, corpus),
+            musicality_score(notes, f7_idx, seed_phrase, SAX_REGISTER, modal=True).overall,
+        )
+        for seed_phrase, kwargs, notes in first_chunk
+    ]
+    best_key = max(recomputed)
+    winner_notes = first_chunk[recomputed.index(best_key)][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+
+    first_chunk_span = 4 * BEATS_PER_BAR
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and 0.0 <= e.start_beat < first_chunk_span
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))

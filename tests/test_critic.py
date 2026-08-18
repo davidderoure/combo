@@ -4,10 +4,12 @@ first sax-adjacent test file that's true of. Real end-to-end wiring (does a
 generated chunk's score actually reach RehearsalMemory) is checked in
 tests/test_sax_wolfson_integration.py, which needs the real weights."""
 
+import json
 import math
 
 import pytest
 
+from ensemble.corpus_motifs import CorpusMotifs
 from ensemble.critic import (
     BREATH_FRACTION_WIDTH,
     DEFAULT_WEIGHTS,
@@ -23,6 +25,7 @@ from ensemble.critic import (
     _widened_mode_scale,
     call_response_relatedness,
     contour_smoothness,
+    corpus_familiarity,
     dissonance,
     dissonance_scale,
     motif_adherence,
@@ -34,6 +37,7 @@ from ensemble.critic import (
     tonal_conformity,
 )
 from ensemble.wolfson.chords import QUAL_DIM, QUAL_DOM, QUAL_MINOR
+from ensemble.wolfson.encoding import dur_to_token
 from ensemble.wolfson.phrase_generator import REST_PITCH
 from ensemble.wolfson.scales import chord_root, chord_to_mode, chord_tones, scale_pitch_classes
 
@@ -515,6 +519,85 @@ def test_motif_adherence_matches_any_one_of_multiple_targets():
 
 def test_motif_adherence_fewer_than_two_notes_is_zero():
     assert motif_adherence(notes_from_pitches([60]), [(2, 2)]) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# corpus_familiarity
+# ---------------------------------------------------------------------------
+
+def _write_corpus_cache(path, chord_quality, pitch_motifs=(), duration_motifs=()):
+    raw = {
+        "n_solos": 1,
+        "n_notes": 1,
+        "pitch_motifs": {str(chord_quality): [[list(m), 1] for m in pitch_motifs]},
+        "duration_motifs": {str(chord_quality): [[list(m), 1] for m in duration_motifs]},
+    }
+    path.write_text(json.dumps(raw))
+
+
+def test_corpus_familiarity_all_motifs_found_scores_one(tmp_path):
+    notes = notes_from_pitches([60, 62, 64], duration_beats=1.0)  # pitch motif (2,2); dur token t x3
+    t = dur_to_token(1.0)
+    path = tmp_path / "cache.json"
+    _write_corpus_cache(path, QUAL_DOM, pitch_motifs=[(2, 2)], duration_motifs=[(t, t), (t, t, t)])
+    corpus = CorpusMotifs(path)
+    assert corpus_familiarity(notes, QUAL_DOM, corpus) == 1.0
+
+
+def test_corpus_familiarity_no_motifs_found_scores_zero(tmp_path):
+    notes = notes_from_pitches([60, 62, 64], duration_beats=1.0)
+    path = tmp_path / "cache.json"
+    _write_corpus_cache(path, QUAL_DOM, pitch_motifs=[(9, 9)], duration_motifs=[(1, 1)])
+    corpus = CorpusMotifs(path)
+    assert corpus_familiarity(notes, QUAL_DOM, corpus) == 0.0
+
+
+def test_corpus_familiarity_mixed_scores_the_exact_fraction(tmp_path):
+    # notes_from_pitches([60,62,64], duration_beats=1.0) produces exactly 4
+    # motifs total: pitch (2,2) once, duration (t,t) twice (two overlapping
+    # 2-note windows) and (t,t,t) once -- see extract_interval_motifs /
+    # extract_duration_motifs. Only (2,2) and (t,t) are in the corpus here,
+    # so 3 of the 4 pooled motifs (1 pitch + 2 duration occurrences of (t,t))
+    # are found -> 3/4.
+    notes = notes_from_pitches([60, 62, 64], duration_beats=1.0)
+    t = dur_to_token(1.0)
+    path = tmp_path / "cache.json"
+    _write_corpus_cache(path, QUAL_DOM, pitch_motifs=[(2, 2)], duration_motifs=[(t, t)])
+    corpus = CorpusMotifs(path)
+    assert corpus_familiarity(notes, QUAL_DOM, corpus) == pytest.approx(0.75)
+
+
+def test_corpus_familiarity_looks_up_the_given_quality_only(tmp_path):
+    # the corpus has the motif under QUAL_MINOR, but we ask about QUAL_DOM --
+    # no cross-quality credit.
+    notes = notes_from_pitches([60, 62, 64], duration_beats=1.0)
+    path = tmp_path / "cache.json"
+    _write_corpus_cache(path, QUAL_MINOR, pitch_motifs=[(2, 2)])
+    corpus = CorpusMotifs(path)
+    assert corpus_familiarity(notes, QUAL_DOM, corpus) == 0.0
+
+
+def test_corpus_familiarity_too_few_notes_for_any_motif_is_zero(tmp_path):
+    path = tmp_path / "cache.json"
+    _write_corpus_cache(path, QUAL_DOM)
+    corpus = CorpusMotifs(path)
+    assert corpus_familiarity(notes_from_pitches([60]), QUAL_DOM, corpus) == 0.0
+
+
+def test_corpus_familiarity_rests_are_excluded_like_every_other_metric(tmp_path):
+    notes = [
+        {"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": REST_PITCH, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": 62, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": 64, "duration_beats": 1.0, "velocity_scale": 1.0},
+    ]
+    t = dur_to_token(1.0)
+    path = tmp_path / "cache.json"
+    _write_corpus_cache(path, QUAL_DOM, pitch_motifs=[(2, 2)], duration_motifs=[(t, t), (t, t, t)])
+    corpus = CorpusMotifs(path)
+    # with the rest excluded, the real notes are exactly [60, 62, 64] again --
+    # same result as the all-found test above, proving REST_PITCH is ignored.
+    assert corpus_familiarity(notes, QUAL_DOM, corpus) == 1.0
 
 
 # ---------------------------------------------------------------------------

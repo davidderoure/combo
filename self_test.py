@@ -15,6 +15,13 @@ whole ensemble rather than one bass+sax pair).
                                                 # (same or different day) and it picks
                                                 # up where it left off (Phase 26,
                                                 # rehearsal_memory/<chart>.json)
+    python self_test.py --corpus               # sax selection also consults the WJD
+                                                # corpus-familiarity check (Phase 29),
+                                                # but only on chunks already pushed off
+                                                # the model's natural distribution by a
+                                                # recalled motif or modal_strength --
+                                                # needs `python wjd_corpus.py --build`
+                                                # to have been run first
 
 Generation is machine_speed (instant) — DESIGN.md §4's "generation produces a
 symbolic timeline, playback/scheduling is a separate stage" architecture is
@@ -29,11 +36,12 @@ response — needs a "live performance driver" that doesn't exist yet.
 
 import argparse
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from config import MIDI_OUTPUT_PORT
 from ensemble import MACHINE_SPEED, NoteEvent, Session, Voice, drum_generator
 from ensemble.comping import comping_generator
+from ensemble.corpus_motifs import CorpusMotifs
 from ensemble.generators import place_in_register
 from ensemble.memory import RehearsalMemory
 from ensemble.roles import default_accompanist_roles
@@ -46,6 +54,8 @@ from song import parse_chart
 DEFAULT_CHART = Path(__file__).resolve().parent / "songs" / "blues_in_f.chart"
 REHEARSAL_MEMORY_DIR = Path(__file__).resolve().parent / "rehearsal_memory"  # Phase 26 -- gitignored,
                                                                                # personal practice data
+WJD_CACHE_PATH = Path(__file__).resolve().parent / "wjd_data" / "wjd_motifs.json"  # Phase 29 -- gitignored,
+                                                                                     # built by wjd_corpus.py --build
 BASS_REGISTER = (28, 52)
 SAX_REGISTER = (55, 79)
 KEYS_REGISTER = (48, 72)
@@ -97,7 +107,12 @@ def walking_bass_stub(register: Tuple[int, int]) -> Generator:
     return generate
 
 
-def build_voices(memory: RehearsalMemory, credit_resolved_tension: bool = False, disable_singability: bool = False):
+def build_voices(
+    memory: RehearsalMemory,
+    credit_resolved_tension: bool = False,
+    disable_singability: bool = False,
+    corpus: Optional[CorpusMotifs] = None,
+):
     """Returns (voices, sax_gen) -- sax_gen is the bare generator closure behind
     the sax Voice (or None if sax_best.pt isn't present), kept separately so
     main() can read its motif_adherence_log after each loop (Phase 17) the same
@@ -113,7 +128,12 @@ def build_voices(memory: RehearsalMemory, credit_resolved_tension: bool = False,
     disable_singability: Phase 13's toggle_singability was built as a live
     director-gesture switch (no CLI equivalent existed before this) -- reaches
     into sax_gen.critic_weights directly, the same exposed-mutable-state
-    convention tests already use, since there's no dedicated setter."""
+    convention tests already use, since there's no dedicated setter.
+
+    corpus (Phase 29): passed straight through to sax_generator -- only
+    affects selection on chunks already pushed off the model's natural
+    distribution (a recalled motif or a modal chart), see sax_generator's own
+    docstring. None (default) is exactly today's behaviour."""
     bass = Voice(
         id="bass",
         instrument="bass (walking-bass stub -- real bass generation isn't built yet)",
@@ -136,7 +156,7 @@ def build_voices(memory: RehearsalMemory, credit_resolved_tension: bool = False,
         # machine_speed generation before playback starts.
         sax_gen = sax_generator(
             SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=8, motif_recall_candidates=20,
-            credit_resolved_tension=credit_resolved_tension,
+            credit_resolved_tension=credit_resolved_tension, corpus=corpus,
         )
         if disable_singability:
             sax_gen.critic_weights["singability"] = 0.0
@@ -194,6 +214,12 @@ def main() -> None:
                               "(rehearsal_memory/<chart>.json), so separate runs on separate days "
                               "build on each other -- not just --loop within one run. Off by "
                               "default: a plain run touches nothing on disk.")
+    parser.add_argument("--corpus", action="store_true",
+                         help="Phase 29: sax selection also consults a WJD corpus-familiarity "
+                              "check, but only on chunks already pushed off the model's natural "
+                              "distribution (a recalled motif or a modal chart) -- see "
+                              "ensemble/sax.py's sax_generator docstring. Needs "
+                              "`python wjd_corpus.py --build` to have been run first.")
     args = parser.parse_args()
 
     if args.list_out:
@@ -205,11 +231,19 @@ def main() -> None:
     persist_path = REHEARSAL_MEMORY_DIR / f"{args.chart.stem}.json" if args.persist else None
     memory = RehearsalMemory(persist_path=persist_path)
 
+    corpus = None
+    if args.corpus:
+        if WJD_CACHE_PATH.exists():
+            corpus = CorpusMotifs(WJD_CACHE_PATH)
+        else:
+            print(f"{WJD_CACHE_PATH} not found -- run 'python wjd_corpus.py --build' first. Continuing without it.")
+
     for i in range(args.loop):
         label = f" (rehearsal {i + 1}/{args.loop})" if args.loop > 1 else ""
         print(f"\nGenerating{label}...")
         voices, sax_gen = build_voices(
-            memory, credit_resolved_tension=args.credit_resolved_tension, disable_singability=args.no_singability
+            memory, credit_resolved_tension=args.credit_resolved_tension, disable_singability=args.no_singability,
+            corpus=corpus,
         )
         session = Session(song=song, voices=voices)
         timeline = session.generate(mode=MACHINE_SPEED)

@@ -172,7 +172,8 @@ from typing import List, Optional, Tuple
 
 from song.chord import Chord
 
-from .critic import DEFAULT_WEIGHTS, dissonance, dissonance_scale, motif_adherence, musicality_score
+from .corpus_motifs import CorpusMotifs
+from .critic import DEFAULT_WEIGHTS, corpus_familiarity, dissonance, dissonance_scale, motif_adherence, musicality_score
 from .memory import RehearsalMemory
 from .timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from .voice import Generator
@@ -362,6 +363,7 @@ def sax_generator(
     n_candidates: int = 1,
     motif_recall_candidates: Optional[int] = None,
     credit_resolved_tension: bool = False,
+    corpus: Optional[CorpusMotifs] = None,
     model_path: Optional[str] = None,
     seed: Optional[int] = None,
 ) -> Generator:
@@ -416,6 +418,23 @@ def sax_generator(
     chunk (doesn't depend on candidate notes), same timing as motif_targets.
     A vi-ii-V-I extension and minor-tonic ii-V-i variant are real, deliberate
     scope-cuts, not attempted here.
+
+    corpus, if given (Phase 29), is a CorpusMotifs built from wjd_corpus.py's
+    WJD motif-frequency cache. It's folded into the selection key ONLY for a
+    chunk that's already bias-distorted away from the model's own natural
+    distribution — a non-empty motif_targets (Phase 17) or song.modal (Phase
+    27's modal_strength) — never for an ordinary chunk. Reasoning (see
+    ensemble/critic.py's corpus_familiarity docstring and DESIGN.md's Phase
+    29 paragraph for the full version): the LSTM was itself trained on WJD,
+    so on an ordinary draw its output is already implicitly corpus-
+    consistent — scoring corpus_familiarity there would mostly just
+    re-reward what the model already learned, and risks systematically
+    favouring "sounds like average WJD" over the deliberate boldness Phases
+    17-24 pushed generation TOWARD. Where a bias nudge (motif_targets/
+    modal_strength) has already pulled sampling off that natural
+    distribution, though, "does this still look like real jazz vocabulary"
+    is a genuinely different, useful question. Defaults to None, reproducing
+    every existing caller's behaviour exactly — no CorpusMotifs, no change.
 
     motif_recall_candidates, if given, overrides n_candidates specifically for
     a chunk that has a non-empty motif_targets — more search shots make it far
@@ -488,6 +507,13 @@ def sax_generator(
                 if picked is not None:
                     motif_targets = [picked]
 
+            # Phase 29: corpus_familiarity is only meaningful for a chunk
+            # already pushed off the model's own natural distribution by one
+            # of our own bias nudges -- see module docstring's `corpus`
+            # paragraph for why applying it more broadly would be
+            # counterproductive, not just unnecessary.
+            is_bias_distorted = bool(motif_targets) or song.modal
+
             candidates_this_chunk = (motif_recall_candidates or n_candidates) if motif_targets else n_candidates
 
             best_notes = None
@@ -511,15 +537,19 @@ def sax_generator(
                     modal=song.modal,
                 )
                 candidate_scores.append(candidate_score.overall)
-                # (-dissonance, adherence, overall) lexicographic key: badness
-                # checked FIRST (negated so max() prefers the LOWEST dissonance),
-                # then adherence to a recalled motif, then general quality as the
-                # final tie-break -- see module docstring for why dissonance
-                # isn't just one more positively-weighted ingredient in `overall`.
-                # When motif_targets is empty and no candidate clashes, the first
-                # two terms are tied at (0.0, 0.0) for every candidate, so this is
-                # provably identical to comparing candidate_score.overall alone
-                # (Phase 14's original behaviour). d is still computed and logged
+                # (-dissonance, adherence, corpus_score, overall) lexicographic
+                # key: badness checked FIRST (negated so max() prefers the
+                # LOWEST dissonance), then adherence to a recalled motif, then
+                # corpus familiarity (Phase 29, only non-zero for a
+                # bias-distorted chunk -- see is_bias_distorted above), then
+                # general quality as the final tie-break -- see module
+                # docstring for why dissonance isn't just one more
+                # positively-weighted ingredient in `overall`. When
+                # motif_targets is empty, no candidate clashes, and the chunk
+                # isn't modal, the first three terms are tied at
+                # (0.0, 0.0, 0.0) for every candidate, so this is provably
+                # identical to comparing candidate_score.overall alone (Phase
+                # 14's original behaviour). d is still computed and logged
                 # even when dissonance_mode is disabled (Phase 20) -- cheap, and
                 # keeps dissonance_log meaningful regardless of what's currently
                 # driving selection -- only whether it counts in the key is gated.
@@ -529,9 +559,15 @@ def sax_generator(
                     extra_tolerated=functional_scale,
                     credit_resolved_tension=credit_resolved_tension,
                 )
+                corpus_score = (
+                    corpus_familiarity(candidate_notes, chord_quality, corpus)
+                    if corpus is not None and is_bias_distorted
+                    else 0.0
+                )
                 key = (
                     -d if dissonance_mode["enabled"] else 0.0,
                     motif_adherence(candidate_notes, motif_targets),
+                    corpus_score,
                     candidate_score.overall,
                 )
                 if best_key is None or key > best_key:

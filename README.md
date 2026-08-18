@@ -469,6 +469,48 @@ wired into `sax_generator`'s real selection, and how this corpus-based signal
 should relate to the existing rule-based critic — David's own open question,
 "we'll see what combination we need" — is deliberately still unresolved.
 
+**The corpus critic gets a real, narrowly-scoped first use, and the corpus
+table is now chord-quality-tagged** (Phase 29). Prompted by a sharp
+follow-up: the LSTM was *trained* on WJD and the corpus table is *built
+from* WJD — isn't that the same information twice? Not quite: the LSTM
+encodes it implicitly and generatively (a diffuse sampling distribution);
+the table encodes it explicitly and non-generatively (exact shape counts).
+The two only meaningfully diverge where `sax_generator` already pushes
+sampling off the model's own distribution — a recalled `motif_targets` bias
+(Phase 17) or `song.modal` (Phase 27) — since only there is "did the model
+produce this" a different question from "does this still look like real
+jazz vocabulary." Elsewhere, scoring corpus-familiarity would mostly
+re-reward what the LSTM already learned, and risks favouring "sounds like
+average WJD" over the deliberate boldness Phases 17-24 pushed generation
+*toward*. So `corpus_familiarity` (`ensemble/critic.py`, standalone, not
+part of `MusicalityScore`, same precedent as `motif_adherence`/`dissonance`)
+enters `sax_generator`'s selection key — `(-dissonance, adherence,
+corpus_score, overall)` — only for a chunk with non-empty `motif_targets` or
+a modal chart; `corpus=None` (the default) and every non-bias-distorted
+chunk reproduce prior selection exactly, verified via the same
+spy-and-recompute discipline as every other real-consumer test in
+`tests/test_sax_wolfson_integration.py`.
+
+Enabling that meant chord-tagging the table (major/dominant/minor/
+diminished, matching what the LSTM itself conditions on) — and doing so
+surfaced a real bug before it could cause a silent error. The obvious
+approach was reusing `ensemble/wolfson/chords.py`'s already-ported
+`parse_chord`, built specifically for WJD's own chord-string notation. But
+checked directly rather than trusted: `parse_chord("Abj7")` returns
+dominant, not major — its quality check looks for the substring `"maj"`,
+while Jazzomat's actual notation marks a major-seventh with a bare `"j"`
+(`"Abj7"`, not `"Abmaj7"`). Not a rare edge case: chord suffixes starting
+with `"j"` total 10.7% of all 30,548 real annotations in `wjazzd.db`. Per
+this project's standing rule (never edit `ensemble/wolfson/*.py`), the fix
+lives in a new, combo-authored classifier in `wjd_corpus.py`, reusing only
+the `QUAL_MAJOR`/`QUAL_DOM`/`QUAL_MINOR`/`QUAL_DIM` integer constants from
+the ported file, not `parse_chord`'s logic — verified against the full real
+suffix vocabulary (48 distinct suffixes, zero fallthrough): dominant 14,807
+/ minor 8,295 / major 5,393 / diminished 1,652 / no-chord 401, a sane
+jazz-harmony distribution. Rebuilding the per-quality table (`ensemble/
+corpus_motifs.py`'s `CorpusMotifs` is the new runtime-consumable lookup)
+still takes under 2s; benchmarked lookups stay effectively free.
+
 **The rehearsal effect is now real, not just wired** (Phase 17). A controlled A/B
 test (`rehearsal_ab_test.py`, kept as a reusable tool rather than a throwaway
 script) comparing one `RehearsalMemory` shared across `--loop` iterations against a
@@ -731,14 +773,21 @@ suite is no longer sub-second once torch is imported.
   passing tones since Phase 19, `_is_passing_tone`; judges against a widened,
   jazz-aware scale since Phase 20/21, `dissonance_scale` — public since Phase 21,
   `ensemble/sax.py` calls it directly), `call_response_relatedness`,
-  `singability`, `musicality_score`; every function pure and deterministic, no
-  model inference), `roles.py` (DESIGN.md §2 — the
+  `singability`, `corpus_familiarity` (Phase 29 — corpus-grounded plausibility
+  against the WJD motif table, standalone like `dissonance`/`motif_adherence`,
+  used by `ensemble/sax.py` only for a bias-distorted chunk), `musicality_score`;
+  every function pure and deterministic, no model inference), `roles.py`
+  (DESIGN.md §2 — the
   same-instrument-doubling slice of role assignment: `default_accompanist_roles`,
   a greedy register-overlap rule; consumed by `comping_generator`'s `lay_out`
   parameter), `rhythm_motifs.py` (DESIGN.md §13 — `extract_duration_motifs`,
   Phase 28's duration-token n-gram sibling to `wolfson/motifs.py`'s
   `extract_interval_motifs`, combo-authored so it doesn't live under
-  `ensemble/wolfson/`).
+  `ensemble/wolfson/`; used by both `wjd_corpus.py` and `corpus_familiarity`
+  above), `corpus_motifs.py` (Phase 29 — `CorpusMotifs`, the runtime-
+  consumable, chord-quality-aware lookup over a `wjd_corpus.py --build`
+  cache; read-only, the corpus-side counterpart to `memory.py`'s
+  `RehearsalMemory`).
 - `output/midi_output.py` — the playback stage (DESIGN.md §4): `list_output_ports`,
   `build_schedule` (pure: `Timeline` + tempo + channel map -> a time-sorted MIDI
   schedule), `play_timeline` (real-time playback, reusing `ensemble.session`'s
@@ -755,9 +804,13 @@ suite is no longer sub-second once torch is imported.
   `tests/test_comping.py`, `tests/test_director.py`, `tests/test_midi_sources.py`,
   `tests/test_transitions.py`, `tests/test_sax.py`, `tests/test_memory.py`,
   `tests/test_critic.py`, `tests/test_roles.py`, `tests/test_midi_output.py`,
-  `tests/test_rhythm_motifs.py` — no MIDI hardware needed
+  `tests/test_rhythm_motifs.py`, `tests/test_wjd_corpus.py`,
+  `tests/test_corpus_motifs.py` — no MIDI hardware needed
 - `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
-  skips cleanly if they're not present (see Running, below)
+  skips cleanly if they're not present (see Running, below). Three Phase 29
+  tests need a second, additional thing — the built WJD corpus cache
+  (`python wjd_corpus.py --build`) — and skip cleanly on their own if it's
+  absent, independent of the weights check.
 - `listen.py` — small runnable script: starts every source in `config.MIDI_SOURCES`,
   prints recognised gestures (performers) and live intensity (directors)
 - `gesture/demo.py` — small runnable script: replays synthetic gesture sequences
@@ -783,11 +836,12 @@ suite is no longer sub-second once torch is imported.
   dissonance-avoidance paragraph above for what it found
   (`python out_of_key_check.py`)
 - `wjd_corpus.py` — small runnable feasibility/benchmark script (DESIGN.md §13,
-  Phase 28): builds a corpus-wide pitch- and duration-motif frequency table
-  from the Weimar Jazz Database (`wjd_data/wjazzd.db`, gitignored — not
-  committed), caches it to disk, and times both the build and 20 candidate
-  lookups against a real sample chunk — see the corpus-similarity paragraph
-  above for the real numbers (`python wjd_corpus.py --build`,
+  Phases 28-29): builds a chord-quality-tagged (major/dominant/minor/
+  diminished), per-quality pitch- and duration-motif frequency table from the
+  Weimar Jazz Database (`wjd_data/wjazzd.db`, gitignored — not committed),
+  caches it to `wjd_data/wjd_motifs.json`, and times both the build and 20
+  candidate lookups against a real sample chunk — see the corpus-similarity
+  paragraphs above for the real numbers (`python wjd_corpus.py --build`,
   `python wjd_corpus.py --benchmark`)
 
 ## Running

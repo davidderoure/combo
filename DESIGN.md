@@ -232,6 +232,41 @@ selection, and the relationship between this corpus-based signal and the
 existing rule-based critic — David's own open question, "we'll see what
 combination we need" — is deliberately still unresolved.
 
+**The corpus-similarity critic gets a real, narrowly-scoped first use**
+(Phase 29) — prompted by a sharp follow-up question: the LSTM was *trained*
+on WJD and the corpus table is *built from* WJD, so isn't that the same
+information twice? Not quite: the LSTM encodes WJD *implicitly and
+generatively* (a diffuse, chord-conditioned sampling distribution); the
+corpus table encodes it *explicitly and non-generatively* (exact shape
+counts). The two only meaningfully diverge where `sax_generator` already
+pushes sampling *off* the model's natural distribution — a recalled
+`motif_targets` bias (Phase 17) or `modal_strength` (Phase 27) — since only
+there does "did the model produce this" and "does this still look like real
+jazz vocabulary" become genuinely different questions. Outside those
+interventions, scoring corpus-familiarity would mostly just re-reward what
+the LSTM already learned, and risks systematically favouring "sounds like
+average WJD" over the deliberate boldness Phases 17-24 pushed generation
+*toward*. So: `corpus_familiarity` (`ensemble/critic.py`, standalone, not
+part of `MusicalityScore`/`DEFAULT_WEIGHTS`, same precedent as
+`motif_adherence`/`dissonance`) only enters `sax_generator`'s selection key
+for a chunk where `motif_targets` is non-empty or `song.modal` is true —
+verified against real selection on both paths (`tests/test_sax_wolfson_
+integration.py`).
+
+The corpus table is now **chord-quality-tagged** (major/dominant/minor/
+diminished, matching what the LSTM itself conditions on) — closing the
+asymmetry the feasibility phase left open. A real bug was found empirically
+before it could cause a silent error: the obvious way to classify a chord
+was `ensemble/wolfson/chords.py`'s already-ported `parse_chord`, but checked
+directly, `parse_chord("Abj7")` returns dominant, not major — its quality
+check looks for the substring `"maj"`, but Jazzomat's own notation marks a
+major-seventh with a bare `"j"`. Not a rare case: 10.7% of all 30,548 real
+chord annotations use this exact prefix. Per this project's standing rule
+(never edit `ensemble/wolfson/*.py`), the fix is a new, combo-authored
+classifier in `wjd_corpus.py`, reusing only the `QUAL_*` integer constants
+from the ported file, not its logic — a documented limitation worked around,
+not fixed in place, same posture as Phase 27's `tonal_conformity` fix.
+
 Register/phrasing/tension-and-resolution (Phases 22-24) are three pieces of a
 larger "beginner vs advanced" idea from the same listening-test discussion; side-
 slipping and an actual call-site register-narrowing switch (vs. today's single

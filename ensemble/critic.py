@@ -21,11 +21,16 @@ Grounded in two real sources, not first-principles guessing:
    T, L) already contains this exact U/D/S vocabulary, independently arrived at
    for a different purpose (live sub-gesture segmentation, not whole-phrase shape
    comparison) -- not shared code, shared vocabulary. The corpus-similarity METHOD
-   doesn't transfer directly here -- combo has no "truth set" of real jazz phrases
-   to compare against (WJazzD is baked into Wolfson's trained weights, not
-   available as raw MIDI), and Grade 1 piano's interval/contour norms are the
-   wrong reference for idiomatic jazz -- but the TECHNIQUE (interval sequences;
-   U/D/S contour strings compared by edit distance) is reused directly below.
+   doesn't transfer directly here -- at the time this was written combo had no
+   "truth set" of real jazz phrases to compare against (WJazzD was baked into
+   Wolfson's trained weights only, not available as raw MIDI to combo), and
+   Grade 1 piano's interval/contour norms are the wrong reference for
+   idiomatic jazz -- but the TECHNIQUE (interval sequences; U/D/S contour
+   strings compared by edit distance) is reused directly below. (Phase 28
+   later did obtain real WJD data as a downloaded SQLite database,
+   wjd_data/wjazzd.db -- see corpus_familiarity below and wjd_corpus.py --
+   this paragraph is left as the honest record of the constraint at the time
+   this module was first written.)
 
 2. Wolfson's own ported bias layers (ensemble/wolfson/phrase_generator.py,
    ensemble/wolfson/scales.py) already encode real, previously-tuned musical
@@ -48,6 +53,8 @@ from collections import Counter
 from dataclasses import dataclass
 from typing import Tuple
 
+from .corpus_motifs import CorpusMotifs
+from .rhythm_motifs import extract_duration_motifs
 from .wolfson.chords import N_QUALITIES, QUAL_DOM
 from .wolfson.encoding import dur_to_token
 from .wolfson.motifs import extract_interval_motifs
@@ -441,6 +448,43 @@ def motif_adherence(notes: list, motif_targets: list) -> float:
         return 0.0
     phrase_motifs = set(extract_interval_motifs(real))
     return 1.0 if any(target in phrase_motifs for target in motif_targets) else 0.0
+
+
+def corpus_familiarity(notes: list, chord_quality: int, corpus: CorpusMotifs) -> float:
+    """Fraction of this candidate's own pitch+duration motifs (pooled) that
+    were actually seen in the Weimar Jazz Database under the SAME chord
+    quality (CorpusMotifs, ensemble/corpus_motifs.py; quality is Wolfson's
+    QUAL_MAJOR/QUAL_DOM/QUAL_MINOR/QUAL_DIM, matching what the LSTM itself
+    conditions on) -- a corpus-grounded plausibility check, distinct from
+    motif_adherence above (which checks a specific RECALLED target, not
+    general corpus familiarity) and distinct from every other function in
+    this module (none reference an external dataset).
+
+    Deliberately NOT part of MusicalityScore/DEFAULT_WEIGHTS below, same
+    precedent as motif_adherence and dissonance -- a standalone function for
+    ensemble/sax.py's selection to use directly, and ONLY for chunks where
+    generation is already pushed off the model's natural distribution
+    (a recalled motif target or modal_strength) -- applying this to every
+    candidate regardless would mostly just re-reward what the LSTM already
+    learned to prefer from training on this exact corpus, and risks
+    systematically favouring "sounds like average WJD" over the deliberate,
+    bold playing Phases 17-24 pushed generation TOWARD, not away from. See
+    DESIGN.md/README's Phase 29 paragraph for the full reasoning.
+
+    No notes, or no extracted motifs at all -> 0.0 (nothing to be familiar
+    or unfamiliar about, not vacuously "fully familiar")."""
+    real = _real_notes(notes)
+    pitch_motifs = extract_interval_motifs(real)
+    duration_motifs = extract_duration_motifs(real)
+    all_motifs = [("pitch", m) for m in pitch_motifs] + [("duration", m) for m in duration_motifs]
+    if not all_motifs:
+        return 0.0
+    found = sum(
+        1
+        for kind, m in all_motifs
+        if (corpus.has_pitch_motif(m, chord_quality) if kind == "pitch" else corpus.has_duration_motif(m, chord_quality))
+    )
+    return found / len(all_motifs)
 
 
 def call_response_relatedness(seed_phrase: list, response_notes: list) -> float:
