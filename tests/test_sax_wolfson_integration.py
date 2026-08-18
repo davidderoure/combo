@@ -883,3 +883,65 @@ def test_functional_context_reaches_real_selection_over_the_ii_chord():
         if e.voice_id == "sax" and 0.0 <= e.start_beat < BEATS_PER_BAR
     )
     assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
+def test_chord_tagged_recall_reaches_real_selection_over_a_multi_quality_chart():
+    """Phase 25: build_ii_v_i_song() cycles Dm7(minor)-G7(dominant)-Cmaj7(major)
+    every bar across its 4 choruses (12 bars total; chord changes every bar so
+    each chunk spans exactly span_bars=1, one PhraseGenerator.generate() call
+    each with n_candidates=1 default) -- a real, multi-quality chart, unlike
+    blues_in_f.chart (checked directly in the plan: every chord there is a
+    dominant 7th, so chord-tagged recall has nothing to differentiate on it).
+    Same spy-and-recompute discipline as every other real-consumer test here:
+    for every chunk that got a non-empty motif_target, independently replay
+    what recall_motifs(chord_quality=...) would have returned using ONLY that
+    quality's phrases stored so far (a fresh RehearsalMemory populated from a
+    slice of the real mem._phrases, not re-derived by a different method), and
+    confirm the target sax_generator actually used matches -- not just that
+    _some_ target was picked."""
+    from ensemble.sax import _pick_achievable_motif, chord_to_wolfson_index
+    from ensemble.wolfson.chords import QUAL_DOM, QUAL_MAJOR, QUAL_MINOR
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    calls = []  # (chord_idx, motif_targets) per generate() call, in order
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        calls.append((kwargs["chord_idx"], kwargs.get("motif_targets") or []))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        mem = RehearsalMemory()
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", memory=mem, seed=4)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        Session(song=build_ii_v_i_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert len(calls) == 12  # one chunk per bar -- chord changes every bar, n_candidates=1
+    assert len(mem._phrases) == 12
+
+    dm7_idx = chord_to_wolfson_index(Chord.parse("Dm7"))
+    g7_idx = chord_to_wolfson_index(Chord.parse("G7"))
+    cmaj7_idx = chord_to_wolfson_index(Chord.parse("Cmaj7"))
+    quality_by_chord_idx = {dm7_idx: QUAL_MINOR, g7_idx: QUAL_DOM, cmaj7_idx: QUAL_MAJOR}
+
+    # Stored chord_quality matches the actual chord each chunk was generated over.
+    for i, (chord_idx, _targets) in enumerate(calls):
+        assert mem._phrases[i]["chord_quality"] == quality_by_chord_idx[chord_idx]
+
+    # The real proof: recompute, per chunk, exactly what recall_motifs(
+    # chord_quality=...) would have returned from ONLY that quality's
+    # phrases stored so far, and confirm the real motif_targets match.
+    for i, (chord_idx, targets) in enumerate(calls):
+        quality = quality_by_chord_idx[chord_idx]
+        replay = RehearsalMemory()
+        replay._phrases = list(mem._phrases[:i])
+        expected_pick = _pick_achievable_motif(replay.recall_motifs(chord_quality=quality))
+        assert targets == ([expected_pick] if expected_pick is not None else [])
+
+    # Not vacuous: at least one chunk actually got a real, non-empty target
+    # from same-quality history.
+    assert any(targets for _chord_idx, targets in calls)

@@ -91,3 +91,57 @@ def test_rehearsal_memory_store_score_defaults_to_one():
     mem.store([{"pitch": p} for p in (60, 62, 64)])
     counts = mem.recall_motifs()
     assert counts[(2, 2)] == 1.0
+
+
+# ---------------------------------------------------------------------------
+# chord-tagged recall (Phase 25)
+# ---------------------------------------------------------------------------
+
+
+def test_recall_motifs_with_chord_quality_returns_only_that_quality():
+    mem = RehearsalMemory()
+    mem.store([{"pitch": p} for p in (60, 62, 64)], chord_quality=1)  # motif (2,2), dominant
+    mem.store([{"pitch": p} for p in (60, 63, 67)], chord_quality=2)  # motif (3,4), minor
+    dom_counts = mem.recall_motifs(chord_quality=1)
+    assert dom_counts[(2, 2)] == 1
+    assert dom_counts[(3, 4)] == 0  # the minor-tagged phrase's motif does not leak in
+
+
+def test_recall_motifs_with_chord_quality_does_not_leak_across_qualities():
+    """The core 'context-aware, not global pooling' proof: two qualities, each
+    recalled separately, never see the other's motifs."""
+    mem = RehearsalMemory()
+    mem.store([{"pitch": p} for p in (60, 62, 64)], chord_quality=1)  # (2,2), dominant
+    mem.store([{"pitch": p} for p in (60, 61, 62)], chord_quality=2)  # (1,1), minor
+    assert mem.recall_motifs(chord_quality=1) == {(2, 2): 1.0}
+    assert mem.recall_motifs(chord_quality=2) == {(1, 1): 1.0}
+
+
+def test_recall_motifs_without_chord_quality_still_pools_everything():
+    """Default (chord_quality=None) reproduces exactly the pre-Phase-25
+    quality-agnostic pooling, regardless of what tags stored phrases carry --
+    the regression check for every existing caller that never passes
+    chord_quality at all."""
+    mem = RehearsalMemory()
+    mem.store([{"pitch": p} for p in (60, 62, 64)], chord_quality=1)
+    mem.store([{"pitch": p} for p in (60, 61, 62)], chord_quality=2)
+    counts = mem.recall_motifs()
+    assert counts[(2, 2)] == 1.0
+    assert counts[(1, 1)] == 1.0
+
+
+def test_recall_motifs_with_chord_quality_excludes_untagged_phrases():
+    """An untagged phrase (no chord_quality recorded) is not a wildcard -- it
+    can't honestly be claimed to fit a specific quality it was never tagged
+    with, so a quality-SPECIFIC recall excludes it, even though it still
+    counts in the quality-agnostic pool (default recall_motifs())."""
+    mem = RehearsalMemory()
+    mem.store([{"pitch": p} for p in (60, 62, 64)])  # untagged, motif (2,2)
+    assert mem.recall_motifs(chord_quality=1) == {}
+    assert mem.recall_motifs()[(2, 2)] == 1.0
+
+
+def test_recall_motifs_with_chord_quality_and_no_matching_history_is_empty():
+    mem = RehearsalMemory()
+    mem.store([{"pitch": p} for p in (60, 62, 64)], chord_quality=1)
+    assert mem.recall_motifs(chord_quality=3) == {}  # quality 3 never stored

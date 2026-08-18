@@ -136,6 +136,27 @@ rippling through every existing call site (14 total, across `ensemble/sax.py`
 and both critic/integration test files) — expected, mechanical fallout, not a
 regression. `DEFAULT_WEIGHTS` rebalanced to seven keys.
 
+Recall is also **chord-quality-aware, not just pooled globally** (Phase 25):
+`RehearsalMemory.store`/`recall_motifs` take an optional `chord_quality`
+(Wolfson's 4-class major/dominant/minor/diminished system), computed once per
+chunk in `ensemble/sax.py` as `chord_idx % N_QUALITIES` and threaded through
+both calls — recall becomes "what worked over a dominant chord", not "what
+worked anywhere". Deliberately tagged by quality, not root or full `chord_idx`
+— checked directly before choosing this: `extract_interval_motifs` is already
+transposition-invariant, so a shape that worked over one root of a quality is
+exactly as valid, transposed, over any other root of the same quality; tagging
+by root too would only fragment the buffer for no musical reason. Strict
+filtering, no cross-quality fallback (a quality with no history yet simply
+recalls nothing, same as no memory at all) — a blended fallback is a real,
+separate future refinement, not attempted. **A real finding worth stating
+plainly**: `songs/blues_in_f.chart` — the project's own reference chart — is
+every chord a dominant 7th (different roots, same quality), so chord-tagged
+recall shows *zero* observable difference there; the real effect is
+demonstrated instead over `tests/test_sax_wolfson_integration.py`'s existing
+`build_ii_v_i_song()` fixture (Dm7-G7-Cmaj7, three distinct qualities),
+verified by replaying the actual stored history to confirm a later chorus's
+motif target came only from same-quality phrases, never a different chord's.
+
 Register/phrasing/tension-and-resolution (Phases 22-24) are three pieces of a
 larger "beginner vs advanced" idea from the same listening-test discussion; side-
 slipping and an actual call-site register-narrowing switch (vs. today's single

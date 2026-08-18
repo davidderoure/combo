@@ -57,7 +57,17 @@ right here (chord_idx and seed_phrase are already local at this exact point, no
 new data plumbing) and passed to memory.store() alongside the notes, so
 recall_motifs() favours motifs from higher-scoring phrases — see
 ensemble/critic.py's module docstring for how "quality" is measured and how
-honestly-placeholder that is.
+honestly-placeholder that is. Recall is also chord-quality-aware (Phase 25):
+chord_quality = chord_idx % N_QUALITIES is computed once per chunk (same
+timing as functional_scale) and passed to both memory.recall_motifs() and
+memory.store(), so a chunk over a dominant chord only ever recalls motifs
+this run stored over other dominant chords — "what worked here", not "what
+worked anywhere". Tagged by Wolfson's 4-class quality, not root or full
+chord_idx — extract_interval_motifs is already transposition-invariant, so a
+shape is equally valid over any root of the same quality; see
+ensemble/memory.py's module docstring for the full reasoning. Strict, no
+cross-quality fallback: a quality with no history yet in this run simply
+recalls nothing, same as memory=None.
 
 Director gesture toggle (Phase 13, DESIGN.md §11): the first real consumer of
 DirectorSignal.gesture since the dial channel was built (Phase 5) — every phase
@@ -445,11 +455,12 @@ def sax_generator(
             since_beat = max(0, bar_index - lookback_bars) * BEATS_PER_BAR
             seed_phrase = _build_seed_phrase(timeline, target_voice_id, since_beat, bar_start)
             chord_idx = chord_to_wolfson_index(song.chord_at(bar_start))
+            chord_quality = chord_idx % N_QUALITIES
             functional_scale = _functional_tonic_scale(song, bar_start)
 
             motif_targets = []
             if memory is not None:
-                picked = _pick_achievable_motif(memory.recall_motifs())
+                picked = _pick_achievable_motif(memory.recall_motifs(chord_quality=chord_quality))
                 if picked is not None:
                     motif_targets = [picked]
 
@@ -504,7 +515,7 @@ def sax_generator(
             generate.motif_adherence_log.append(best_key[1])
 
             if memory is not None:
-                memory.store(notes, score=best_score.overall)
+                memory.store(notes, score=best_score.overall, chord_quality=chord_quality)
             plan.extend(_split_phrase_into_bars(notes, bar_start, span_bars, register))
 
         return plan.popleft()
