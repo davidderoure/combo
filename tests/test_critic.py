@@ -4,10 +4,15 @@ first sax-adjacent test file that's true of. Real end-to-end wiring (does a
 generated chunk's score actually reach RehearsalMemory) is checked in
 tests/test_sax_wolfson_integration.py, which needs the real weights."""
 
+import math
+
 import pytest
 
 from ensemble.critic import (
+    BREATH_FRACTION_WIDTH,
     DEFAULT_WEIGHTS,
+    MIN_BREATH_BEATS,
+    TARGET_BREATH_FRACTION,
     _contour_string,
     _is_passing_tone,
     _is_resolved_tension,
@@ -20,6 +25,7 @@ from ensemble.critic import (
     dissonance_scale,
     motif_adherence,
     musicality_score,
+    phrasing,
     repetition,
     singability,
     tonal_conformity,
@@ -500,6 +506,75 @@ def test_singability_no_real_notes_is_zero():
 
 
 # ---------------------------------------------------------------------------
+# phrasing (Phase 23) -- the only function here that looks at REST_PITCH
+# sentinels directly rather than _real_notes()-filtering them out first.
+# ---------------------------------------------------------------------------
+
+
+def test_phrasing_no_notes_is_zero():
+    assert phrasing([]) == 0.0
+
+
+def test_phrasing_zero_breath_scores_below_near_target():
+    # No REST_PITCH entries at all -- breath fraction 0.0, away from
+    # TARGET_BREATH_FRACTION -- reads as running on, no gaps.
+    no_breath = notes_from_pitches([60, 62, 64, 65, 67, 69, 71, 72])
+    # total = 7.5 beats, one 1.0-beat rest -> fraction ~0.133, close to 0.15.
+    near_target = [
+        {"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": REST_PITCH, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": 62, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": 64, "duration_beats": 4.5, "velocity_scale": 1.0},
+    ]
+    assert phrasing(no_breath) < phrasing(near_target)
+    assert phrasing(near_target) > 0.9
+
+
+def test_phrasing_excessive_breath_scores_below_near_target_too():
+    # total = 5.0 beats, 3.0 beats of rest -> fraction 0.6, far ABOVE the
+    # target -- the bell curve penalises too much silence symmetrically,
+    # not just too little.
+    excessive = [
+        {"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": REST_PITCH, "duration_beats": 3.0, "velocity_scale": 1.0},
+        {"pitch": 62, "duration_beats": 1.0, "velocity_scale": 1.0},
+    ]
+    near_target = [
+        {"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": REST_PITCH, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": 62, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": 64, "duration_beats": 4.5, "velocity_scale": 1.0},
+    ]
+    assert phrasing(excessive) < phrasing(near_target)
+
+
+def test_phrasing_sub_threshold_rest_does_not_count_as_breath():
+    # The rest is shorter than MIN_BREATH_BEATS -- doesn't count, so this
+    # should score identically to an equal-duration phrase with NO rest at
+    # all (both have breath fraction 0.0).
+    below_threshold = [
+        {"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": REST_PITCH, "duration_beats": 0.25, "velocity_scale": 1.0},  # < MIN_BREATH_BEATS
+        {"pitch": 62, "duration_beats": 1.0, "velocity_scale": 1.0},
+    ]
+    assert 0.25 < MIN_BREATH_BEATS
+    no_rest_same_total = notes_from_pitches([60, 62], duration_beats=1.125)  # same 2.25 total
+    assert phrasing(below_threshold) == pytest.approx(phrasing(no_rest_same_total))
+
+
+def test_phrasing_denominator_is_total_duration_not_just_real_note_time():
+    # 1 real note (1.0 beat) + 1 qualifying rest (1.0 beat) -> fraction must
+    # be 1.0/2.0 = 0.5 (total duration), NOT 1.0/1.0 = 1.0 (real-note time
+    # only) -- computed directly against the exact formula to pin this down.
+    notes = [
+        {"pitch": 60, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": REST_PITCH, "duration_beats": 1.0, "velocity_scale": 1.0},
+    ]
+    expected = math.exp(-0.5 * ((0.5 - TARGET_BREATH_FRACTION) / BREATH_FRACTION_WIDTH) ** 2)
+    assert phrasing(notes) == pytest.approx(expected)
+
+
+# ---------------------------------------------------------------------------
 # musicality_score combination
 # ---------------------------------------------------------------------------
 
@@ -515,6 +590,7 @@ def test_musicality_score_overall_is_the_documented_weighted_sum():
         + score.repetition * DEFAULT_WEIGHTS["repetition"]
         + score.call_response_relatedness * DEFAULT_WEIGHTS["call_response_relatedness"]
         + score.singability * DEFAULT_WEIGHTS["singability"]
+        + score.phrasing * DEFAULT_WEIGHTS["phrasing"]
     )
     assert score.overall == pytest.approx(expected_overall)
 

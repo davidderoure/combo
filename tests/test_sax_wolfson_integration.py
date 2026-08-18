@@ -317,6 +317,69 @@ def test_search_picks_the_actual_highest_scoring_candidate():
     assert set(dispensed_pitches).issubset(set(winner_pitches))
 
 
+def test_phrasing_varies_across_real_candidates_and_reaches_selection():
+    """Phase 23: musicality_score's new phrasing sub-score is a real, active
+    ingredient in real selection, not just a correctly-computed pure function
+    in isolation -- same spy-and-recompute technique as
+    test_search_picks_the_actual_highest_scoring_candidate, but checking the
+    phrasing sub-score specifically: real candidates in one chunk show genuine
+    variance (not degenerate/constant across the batch -- the concrete proof
+    this can actually differentiate candidates during search), and the
+    winner's overall (recomputed via the real musicality_score, which now
+    includes phrasing automatically) still matches what sax_generator picked
+    -- no ensemble/sax.py changes were needed for this, since it only ever
+    reads musicality_score(...).overall.
+
+    Winner identification uses the REAL lexicographic selection key
+    (-dissonance, motif_adherence, overall), not overall alone -- overall is
+    only the final tie-break, and this seed/n_candidates combination does
+    show real dissonance variance across the batch (unlike some other tests'
+    seeds, where overall alone happens to coincide with the real winner)."""
+    from ensemble.critic import dissonance, motif_adherence, musicality_score
+    from ensemble.sax import _functional_tonic_scale
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        song = build_slow_song()
+        timeline = Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    last_chunk = candidates[-8:]
+    scored = [musicality_score(notes, kwargs["chord_idx"], seed_phrase) for seed_phrase, kwargs, notes in last_chunk]
+
+    phrasing_values = [s.phrasing for s in scored]
+    assert len(set(round(p, 6) for p in phrasing_values)) > 1  # genuine variance, not degenerate
+
+    recomputed_overall = [s.overall for s in scored]
+    assert recomputed_overall == sax_gen.last_candidate_scores
+
+    second_chunk_start = 4 * BEATS_PER_BAR
+    functional_scale = _functional_tonic_scale(song, second_chunk_start)
+    keys = [
+        (-dissonance(notes, kwargs["chord_idx"], extra_tolerated=functional_scale), motif_adherence(notes, []), score.overall)
+        for (seed_phrase, kwargs, notes), score in zip(last_chunk, scored)
+    ]
+    winner_notes = last_chunk[keys.index(max(keys))][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
 def test_search_with_one_candidate_matches_unset_behaviour():
     """n_candidates=1 (explicit) must reproduce n_candidates-unset behaviour
     exactly -- the concrete backward-compatibility check, same seed both ways."""
@@ -327,19 +390,46 @@ def test_search_with_one_candidate_matches_unset_behaviour():
 
 def test_search_never_does_worse_than_a_single_draw():
     """A real quality comparison, reported honestly either way: search's best
-    score for the *same final chunk* should never be WORSE than a single draw's,
-    since search always keeps the max among what a single draw would have
-    produced anyway. Scoped to build_slow_song()'s last chunk specifically --
-    last_candidate_scores reflects only the most recently built chunk (it's
-    overwritten, not accumulated, each time a new one is built), not an average
-    across the whole run, said plainly rather than overclaimed."""
-    single = make_slow_session(seed=11, n_candidates=1)
-    single.generate()
-    single_score = single.voices[1].generator.last_candidate_scores[0]
+    score for a chunk should never be WORSE than a single draw's, since search
+    always keeps the max among what a single draw would have produced anyway.
 
-    searched = make_slow_session(seed=11, n_candidates=8)
-    searched.generate()
-    searched_best = max(searched.voices[1].generator.last_candidate_scores)
+    Scoped to the FIRST chunk specifically, captured via a spy rather than
+    read off last_candidate_scores (which reflects only the most recently
+    built chunk, i.e. build_slow_song()'s SECOND chunk) -- deliberately: by
+    the second chunk, the two sessions have each already consumed a
+    different number of candidate draws from torch's shared global RNG (1 vs
+    8), so their RNG states have diverged and the "max of a superset"
+    argument no longer rigorously holds there (found directly, not assumed,
+    when Phase 23's phrasing sub-score -- itself sensitive to per-candidate
+    rest placement, which is RNG-driven -- tipped a previously-lucky
+    comparison the other way). It DOES hold for the first chunk, before any
+    divergence: both sessions reseed identically at construction, so
+    single's one draw is exactly searched's first draw."""
+    from ensemble.critic import musicality_score
+
+    def first_chunk_candidates(n_candidates):
+        original = wolfson_phrase_generator.PhraseGenerator.generate
+        candidates = []
+
+        def recording_generate(self, seed_phrase, **kwargs):
+            notes = original(self, seed_phrase, **kwargs)
+            candidates.append((seed_phrase, kwargs, notes))
+            return notes
+
+        wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+        try:
+            make_slow_session(seed=11, n_candidates=n_candidates).generate()
+        finally:
+            wolfson_phrase_generator.PhraseGenerator.generate = original
+        return candidates[:n_candidates]  # first chunk only
+
+    single_seed_phrase, single_kwargs, single_notes = first_chunk_candidates(1)[0]
+    single_score = musicality_score(single_notes, single_kwargs["chord_idx"], single_seed_phrase).overall
+
+    searched_best = max(
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase).overall
+        for seed_phrase, kwargs, notes in first_chunk_candidates(8)
+    )
 
     assert searched_best >= single_score
 

@@ -72,13 +72,32 @@ PASSING_TONE_MAX_STEP = 2  # semitones -- standard tonal-theory "step" (minor or
                              # resolution side of a tension-and-release) -- one "step"
                              # concept, not two constants for it. A placeholder like
                              # every other constant here, not asserted as musically final.
+MIN_BREATH_BEATS = 0.5  # shortest duration counted as a genuine "breath"/sentence
+                          # boundary (Phase 23) -- matches phrase_generator.py's own
+                          # shortest producible rest (_REST_DURATIONS = [0.5, 1.0]),
+                          # so nothing the model can currently produce is excluded; a
+                          # forward-looking definition more than an active filter
+                          # today, same honesty convention as every constant here.
+TARGET_BREATH_FRACTION = 0.15  # placeholder, empirically grounded: 40 real 4-bar
+                                 # chunks had mean breath fraction 0.129, median
+                                 # 0.124 -- this target sits close to that natural
+                                 # centre, nudged slightly higher to push selection
+                                 # toward a bit MORE breath than the unweighted
+                                 # default, matching what David actually asked for.
+BREATH_FRACTION_WIDTH = 0.08   # placeholder -- same bell-curve treatment as
+                                 # SINGABLE_DUR_CENTER/WIDTH below; tight enough that
+                                 # a zero-breath chunk (David's actual complaint --
+                                 # solos running on with no gaps) scores clearly
+                                 # lower (~0.17) while chunks near the natural mean
+                                 # score highly.
 
 DEFAULT_WEIGHTS = {
-    "tonal_conformity": 0.25,
-    "contour_smoothness": 0.2,
-    "repetition": 0.2,
+    "tonal_conformity": 0.2,
+    "contour_smoothness": 0.15,
+    "repetition": 0.15,
     "call_response_relatedness": 0.15,
-    "singability": 0.2,
+    "singability": 0.15,
+    "phrasing": 0.2,
 }
 
 
@@ -420,6 +439,42 @@ def singability(notes: list) -> float:
     return sum(scores) / len(scores)
 
 
+def phrasing(notes: list) -> float:
+    """Fraction of the chunk's total duration spent in a genuine breath, scored
+    via a bell curve around TARGET_BREATH_FRACTION -- same style as singability()
+    above. Prompted directly by a listening-test observation: "the solos are not
+    speaking in 'sentences' with gaps in between." The only function in this
+    module that looks at raw `notes` (including REST_PITCH sentinels) rather than
+    _real_notes()-filtering them out first -- the "gaps" this measures ARE those
+    sentinels, already spliced in by phrase_generator.py's own _inject_rests
+    (bell-curve-weighted toward the phrase midpoint, capped at
+    REST_MAX_PROBABILITY=0.15, each rest 0.5 or 1.0 beats -- naturally sparse,
+    which is exactly what the listening test caught; no other function here ever
+    looks at this).
+
+    Too little breath (fraction near 0 -- a phrase that never pauses) reads as
+    running on with no sentence structure; too much reads as fragmented,
+    disjointed silence rather than phrasing -- the bell curve penalises both
+    directions symmetrically, same treatment as singability's duration curve.
+    Deliberately not a separate "sentence count" measure on top of this -- one
+    fraction captures both space (breath amount) and, indirectly, phrasing (more
+    breath in the target range naturally means more sentence-like division); a
+    more explicit segmentation measure is a possible future refinement, not
+    attempted here. No notes at all -> 0.0."""
+    if not notes:
+        return 0.0
+    total_beats = sum(n["duration_beats"] for n in notes)
+    if total_beats <= 0:
+        return 0.0
+    breath_beats = sum(
+        n["duration_beats"] for n in notes
+        if n["pitch"] == REST_PITCH and n["duration_beats"] >= MIN_BREATH_BEATS
+    )
+    fraction = breath_beats / total_beats
+    dist = fraction - TARGET_BREATH_FRACTION
+    return math.exp(-0.5 * (dist / BREATH_FRACTION_WIDTH) ** 2)
+
+
 @dataclass(frozen=True)
 class MusicalityScore:
     tonal_conformity: float
@@ -427,6 +482,7 @@ class MusicalityScore:
     repetition: float
     call_response_relatedness: float
     singability: float
+    phrasing: float
     overall: float
 
 
@@ -445,6 +501,7 @@ def musicality_score(notes: list, chord_idx: int, seed_phrase: list, weights: di
         "repetition": repetition(notes),
         "call_response_relatedness": call_response_relatedness(seed_phrase, notes),
         "singability": singability(notes),
+        "phrasing": phrasing(notes),
     }
     overall = sum(scores[key] * weights.get(key, 0.0) for key in scores)
     return MusicalityScore(overall=overall, **scores)

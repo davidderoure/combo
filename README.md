@@ -299,24 +299,57 @@ directly — combo has no "truth set" of real jazz phrases to compare against, a
 Grade 1 piano's interval norms are the wrong reference for jazz — but the
 *technique* does: interval sequences, and U/D/S contour-string edit distance (a
 small in-house Levenshtein function, not a new dependency for one ~15-line
-algorithm). Five metrics: `tonal_conformity`, `contour_smoothness`, `repetition`
+algorithm). Six metrics: `tonal_conformity`, `contour_smoothness`, `repetition`
 (exact n-gram repeats, Phase 11's `extract_interval_motifs`, plus *near*-repeats
 via contour edit distance — new here, catches a varied restatement exact matching
 misses), `call_response_relatedness` (contour similarity between the seed and the
 response — genuinely new, prompted directly by the notebook; documented honestly
 as measuring *relatedness* not *goodness*, since real call-and-response sometimes
-deliberately contrasts rather than mirrors), and `singability`. Every one is a
-**pure, deterministic function needing no model inference** — the first
-sax-adjacent test file since Phase 8 that's fully testable without `sax_best.pt`.
-All weights and thresholds (`DEFAULT_WEIGHTS`, the smoothness/near-repeat
-placeholders) are explicit, unvalidated placeholders, same status as every other
-hand-picked constant in this codebase — needing real tuning once there's a way to
-listen and compare.
+deliberately contrasts rather than mirrors), `singability`, and `phrasing` (Phase
+23, below). Every one is a **pure, deterministic function needing no model
+inference** — the first sax-adjacent test file since Phase 8 that's fully
+testable without `sax_best.pt`. All weights and thresholds (`DEFAULT_WEIGHTS`, the
+smoothness/near-repeat placeholders) are explicit, unvalidated placeholders, same
+status as every other hand-picked constant in this codebase — needing real tuning
+once there's a way to listen and compare.
 
 Deliberately still deferred, same scope-cut discipline as every earlier phase: all
 ~10 of the model's OTHER rule-based bias knobs (energy arc, contour, register
 contrast, ...) stay at their defaults; hidden-state continuity still resets
 *between* planned chunks.
+
+**A phrasing/breath metric — "speaking in sentences"** (Phase 23). From the same
+listening test as Phase 22: "the solos are not speaking in 'sentences' with gaps
+in between, which is something that is taught by educators." `phrasing()` is the
+only one of the six metrics that looks at raw `notes` (including `REST_PITCH`
+sentinels) rather than the `_real_notes()`-filtered view every other metric
+uses — `phrase_generator.py`'s own `_inject_rests` already splices genuine rests
+into generated output (bell-curve-weighted toward the phrase midpoint, capped at
+`REST_MAX_PROBABILITY=0.15`, each 0.5 or 1.0 beats), but nothing had ever looked
+at that structure before. Measures the fraction of a chunk's total duration spent
+in a genuine breath (`MIN_BREATH_BEATS=0.5`, matching the model's own shortest
+producible rest), scored via the same bell-curve treatment as `singability` —
+too little breath reads as running on with no sentence structure, too much reads
+as fragmented. `TARGET_BREATH_FRACTION`/`BREATH_FRACTION_WIDTH` are empirically
+grounded, not guessed: 40 real 4-bar chunks had mean breath fraction 0.129,
+median 0.124 — the target sits close to that natural centre, nudged slightly
+higher to push selection toward a bit more breath than the unweighted default.
+`DEFAULT_WEIGHTS` rebalanced to six keys summing to 1.0, same placeholder status
+as every other weight. **Needed no changes to `ensemble/sax.py` at all** — the
+cleanest possible outcome: `sax_generator`'s selection key already reads
+`musicality_score(...).overall` generically (never enumerates
+`MusicalityScore`'s fields by name), so the new sub-score reaches real selection
+automatically through the existing weighted-sum mechanism. Verified this isn't
+vacuous with a real integration test: real candidates from one chunk show
+genuine variance in `phrasing`, not a degenerate constant. Deliberately not a
+separate "sentence count" measure on top of the breath fraction — a possible
+future refinement, not attempted. One piece of a larger "beginner vs advanced"
+idea from the same listening test (register range as a skill-level control, and
+side-slipping, both still deferred, alongside Phase 22's tension-and-resolution
+crediting); a much bigger, explicitly separate idea from the same discussion is
+a whole-solo *narrative-arc* critic (intro/tension/resolution across many
+chunks) — genuinely different in kind, since every metric here scores one chunk
+in isolation, not a performance.
 
 **The rehearsal effect is now real, not just wired** (Phase 17). A controlled A/B
 test (`rehearsal_ab_test.py`, kept as a reusable tool rather than a throwaway
