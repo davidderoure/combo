@@ -90,7 +90,7 @@ def walking_bass_stub(register: Tuple[int, int]) -> Generator:
     return generate
 
 
-def build_voices(memory: RehearsalMemory, credit_resolved_tension: bool = False):
+def build_voices(memory: RehearsalMemory, credit_resolved_tension: bool = False, disable_singability: bool = False):
     """Returns (voices, sax_gen) -- sax_gen is the bare generator closure behind
     the sax Voice (or None if sax_best.pt isn't present), kept separately so
     main() can read its motif_adherence_log after each loop (Phase 17) the same
@@ -101,7 +101,12 @@ def build_voices(memory: RehearsalMemory, credit_resolved_tension: bool = False)
     matching sax_generator's own. Pass --credit-resolved-tension to hear the
     "advanced" behaviour instead: a deliberate, resolved tension (e.g. a b9
     resolving by step to the root) survives selection rather than being
-    avoided outright."""
+    avoided outright.
+
+    disable_singability: Phase 13's toggle_singability was built as a live
+    director-gesture switch (no CLI equivalent existed before this) -- reaches
+    into sax_gen.critic_weights directly, the same exposed-mutable-state
+    convention tests already use, since there's no dedicated setter."""
     bass = Voice(
         id="bass",
         instrument="bass (walking-bass stub -- real bass generation isn't built yet)",
@@ -126,6 +131,8 @@ def build_voices(memory: RehearsalMemory, credit_resolved_tension: bool = False)
             SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=8, motif_recall_candidates=20,
             credit_resolved_tension=credit_resolved_tension,
         )
+        if disable_singability:
+            sax_gen.critic_weights["singability"] = 0.0
         voices.append(Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen))
     else:
         print(
@@ -171,6 +178,10 @@ def main() -> None:
                          help="Phase 22: 'advanced' mode -- a deliberate, resolved tension "
                               "(approached from an in-scale note, resolved by step onto a "
                               "chord tone) survives selection instead of being avoided.")
+    parser.add_argument("--no-singability", action="store_true",
+                         help="Zero out the singability weight (Phase 13's toggle_singability, "
+                              "here exposed as a flag instead of only a live director gesture) -- "
+                              "don't mark down fast/exploratory playing for being unsustained.")
     args = parser.parse_args()
 
     if args.list_out:
@@ -184,7 +195,9 @@ def main() -> None:
     for i in range(args.loop):
         label = f" (rehearsal {i + 1}/{args.loop})" if args.loop > 1 else ""
         print(f"\nGenerating{label}...")
-        voices, sax_gen = build_voices(memory, credit_resolved_tension=args.credit_resolved_tension)
+        voices, sax_gen = build_voices(
+            memory, credit_resolved_tension=args.credit_resolved_tension, disable_singability=args.no_singability
+        )
         session = Session(song=song, voices=voices)
         timeline = session.generate(mode=MACHINE_SPEED)
         print(
