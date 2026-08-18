@@ -5,6 +5,15 @@ change sax's output, measured against the same critic combo already uses
     python rehearsal_ab_test.py                       # 20 loops, blues_in_f.chart
     python rehearsal_ab_test.py --loops 40 --n-candidates 5
     python rehearsal_ab_test.py --chart songs/x.chart
+    python rehearsal_ab_test.py --plot                # also saves rehearsal_ab_test.png --
+                                                        # one subplot per MusicalityScore metric
+                                                        # (+ motif_adherence), persistent vs
+                                                        # control, so the SHAPE of each metric's
+                                                        # curve across loops is visible at a
+                                                        # glance, not just its final trend slope.
+                                                        # Needs matplotlib -- not a core combo
+                                                        # dependency, lazily imported so a plain
+                                                        # run still works without it installed.
 
 Two conditions, differing ONLY in whether one RehearsalMemory is shared across
 loop iterations or a fresh one is built each loop -- isolates cross-run
@@ -76,15 +85,22 @@ lives.
 import argparse
 from collections import defaultdict
 from contextlib import contextmanager
+from dataclasses import fields
 from pathlib import Path
 
 import numpy as np
 
 import ensemble.sax as sax_module
 from ensemble import MACHINE_SPEED, Session, Voice, chord_tone_generator
+from ensemble.critic import MusicalityScore
 from ensemble.memory import RehearsalMemory
 from ensemble.wolfson.phrase_generator import PhraseGenerator
 from song import parse_chart
+
+# Every MusicalityScore field, read via dataclasses.fields() rather than a
+# hand-maintained list -- stays correct automatically as new critic metrics
+# are added (Phases 23/24 already added two since this tool was first built).
+SCORE_METRICS = [f.name for f in fields(MusicalityScore)]
 
 DEFAULT_CHART = Path(__file__).resolve().parent / "songs" / "blues_in_f.chart"
 BASS_REGISTER = (28, 52)
@@ -106,9 +122,9 @@ def spy_on_sax_generation():
     motif_records = []  # (loop, candidate_index_in_loop, motif_strength)
     state = {"loop": -1, "candidate": -1}
 
-    def score_wrapper(notes, chord_idx, seed_phrase, weights=None):
+    def score_wrapper(notes, chord_idx, seed_phrase, register, weights=None):
         state["candidate"] += 1
-        score = original_score(notes, chord_idx, seed_phrase, weights=weights)
+        score = original_score(notes, chord_idx, seed_phrase, register, weights=weights)
         score_records.append((state["loop"], state["candidate"], score))
         return score
 
@@ -190,8 +206,13 @@ def first_candidate_motif_rate(motif_records, skip_loop_0=True):
 
 def report(label, score_records, motif_records, adherence_records):
     print(f"\n=== {label} ===")
-    loops, rep = loop_averages(score_records, "repetition")
-    _loops, overall = loop_averages(score_records, "overall")
+    # Every MusicalityScore sub-metric's loop averages, not just the two
+    # printed below -- SCORE_METRICS covers all 8 (7 sub-scores + overall),
+    # kept for plot_metrics() below regardless of whether --plot is passed
+    # (cheap: score_records already holds the full MusicalityScore objects).
+    all_metrics = {name: loop_averages(score_records, name) for name in SCORE_METRICS}
+    loops, rep = all_metrics["repetition"]
+    _loops, overall = all_metrics["overall"]
     _loops2, adherence = adherence_loop_averages(adherence_records)
     for l, r, o, a in zip(loops, rep, overall, adherence):
         n_candidate_scores = sum(1 for li, _c, _s in score_records if li == l)
@@ -200,8 +221,9 @@ def report(label, score_records, motif_records, adherence_records):
 
     adherence_slope = trend_slope(loops, adherence)
     rep_slope = trend_slope(loops, rep)
+    overall_slope = trend_slope(loops, overall)
     print(f"  linear trend across loops: motif_adherence slope={adherence_slope:+.5f}/loop   "
-          f"repetition slope={rep_slope:+.5f}/loop")
+          f"repetition slope={rep_slope:+.5f}/loop   overall slope={overall_slope:+.5f}/loop")
 
     fc_adherence, n_fc = first_chunk_adherence_average(adherence_records)
     motif_rate, n_mc = first_candidate_motif_rate(motif_records)
@@ -210,8 +232,55 @@ def report(label, score_records, motif_records, adherence_records):
           f"non-empty motif_target rate={motif_rate:.0%} (n={n_mc})")
 
     return {"loops": loops, "repetition": rep, "overall": overall, "adherence": adherence,
-            "adherence_slope": adherence_slope, "rep_slope": rep_slope,
-            "first_chunk_adherence": fc_adherence, "first_chunk_motif_rate": motif_rate}
+            "adherence_slope": adherence_slope, "rep_slope": rep_slope, "overall_slope": overall_slope,
+            "first_chunk_adherence": fc_adherence, "first_chunk_motif_rate": motif_rate,
+            "all_metrics": all_metrics, "adherence_by_loop": (_loops2, adherence)}
+
+
+def plot_metrics(persistent_summary, control_summary, output_path: Path) -> None:
+    """One small-multiples grid, one subplot per MusicalityScore metric plus
+    motif_adherence, each showing persistent vs control across loop index --
+    lets the shape of each metric's curve (flat, rising, noisy, ...) be
+    compared at a glance, not just its final trend slope. Lazy matplotlib
+    import: this tool otherwise has no plotting dependency, so a plain run
+    (no --plot) still works without matplotlib installed."""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("matplotlib not installed -- skipping --plot (pip install matplotlib to enable it).")
+        return
+
+    metric_names = SCORE_METRICS + ["adherence"]
+    n = len(metric_names)
+    cols = 3
+    rows = -(-n // cols)  # ceiling division
+    fig, axes = plt.subplots(rows, cols, figsize=(4 * cols, 3 * rows), squeeze=False)
+
+    for i, name in enumerate(metric_names):
+        ax = axes[i // cols][i % cols]
+        if name == "adherence":
+            p_loops, p_values = persistent_summary["adherence_by_loop"]
+            c_loops, c_values = control_summary["adherence_by_loop"]
+            title = "motif_adherence"
+        else:
+            p_loops, p_values = persistent_summary["all_metrics"][name]
+            c_loops, c_values = control_summary["all_metrics"][name]
+            title = name
+        ax.plot(p_loops, p_values, label="persistent", color="tab:blue", marker="o", markersize=3)
+        ax.plot(c_loops, c_values, label="control", color="tab:orange", marker="o", markersize=3)
+        ax.set_title(title, fontsize=10)
+        ax.set_xlabel("loop")
+        ax.tick_params(labelsize=8)
+
+    for i in range(n, rows * cols):
+        axes[i // cols][i % cols].axis("off")  # unused grid cells
+
+    axes[0][0].legend(fontsize=8)
+    fig.suptitle("rehearsal_ab_test.py -- per-loop metric curves, persistent vs control")
+    fig.tight_layout()
+    fig.savefig(output_path, dpi=150)
+    plt.close(fig)
+    print(f"\nSaved plot to {output_path}")
 
 
 def main() -> None:
@@ -220,6 +289,11 @@ def main() -> None:
     parser.add_argument("--loops", type=int, default=20)
     parser.add_argument("--n-candidates", type=int, default=3)
     parser.add_argument("--motif-recall-candidates", type=int, default=20)
+    parser.add_argument("--plot", action="store_true",
+                         help="Save a grid of per-loop metric curves (persistent vs control), "
+                              "one subplot per MusicalityScore metric plus motif_adherence. "
+                              "Needs matplotlib (not a core combo dependency, see requirements.txt).")
+    parser.add_argument("--plot-output", type=Path, default=Path("rehearsal_ab_test.png"))
     args = parser.parse_args()
 
     print(f"Running {args.loops} loops x 2 conditions over {args.chart.name}, "
@@ -249,6 +323,11 @@ def main() -> None:
           f"vs control={control_summary['adherence_slope']:+.5f}/loop")
     print(f"Whole-run repetition trend slope:      persistent={persistent_summary['rep_slope']:+.5f}/loop  "
           f"vs control={control_summary['rep_slope']:+.5f}/loop")
+    print(f"Whole-run overall (musicality_score) trend slope: persistent={persistent_summary['overall_slope']:+.5f}/loop  "
+          f"vs control={control_summary['overall_slope']:+.5f}/loop")
+
+    if args.plot:
+        plot_metrics(persistent_summary, control_summary, args.plot_output)
 
 
 if __name__ == "__main__":

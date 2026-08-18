@@ -9,3 +9,6 @@ __pycache__/
 # from training on the Weimar Jazz Database, which carries its own research-use
 # terms. Copy in manually from ~/wolfson/models/sax_best.pt — see README.
 ensemble/wolfson/models/
+
+# rehearsal_ab_test.py --plot output -- a regenerable chart, not source.
+rehearsal_ab_test.png
