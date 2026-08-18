@@ -11,7 +11,7 @@ __pycache__/
 ensemble/wolfson/models/
 
 # rehearsal_ab_test.py --plot output -- a regenerable chart, not source.
-rehearsal_ab_test.png
+rehearsal_ab_test*.png
 
 # self_test.py --persist (Phase 26) -- personal practice data, not source.
 rehearsal_memory/
