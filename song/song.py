@@ -23,6 +23,11 @@ class Song:
     tempo_bpm: float = 120.0
     feel: str = "swing"
     key: Optional[int] = None  # pitch class, for reference/transposition only
+    modal: bool = False  # Phase 27: chart-authored style choice (mirroring how a
+                          # player reads the artist/date to decide triadic vs
+                          # quartal/modal vocabulary -- see ensemble/critic.py's
+                          # MODAL_LEAP_SEMITONES and ensemble/sax.py's
+                          # MODAL_STRENGTH_WHEN_ACTIVE)
 
     @property
     def total_beats(self) -> Optional[float]:
@@ -70,4 +75,5 @@ class Song:
             tempo_bpm=self.tempo_bpm,
             feel=self.feel,
             key=new_key,
+            modal=self.modal,
         )

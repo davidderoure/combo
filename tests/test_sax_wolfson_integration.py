@@ -976,3 +976,88 @@ def test_disk_persistence_crosses_a_real_process_boundary(tmp_path):
         wolfson_phrase_generator.PhraseGenerator.generate = original
 
     assert first_chunk_targets[0] != []  # rehearsal 2's first chunk recalled something from disk
+
+
+def test_credit_resolved_tension_reaches_tonal_conformity_in_real_selection():
+    """Phase 27: credit_resolved_tension no longer only helps a candidate
+    survive the dissonance gate -- it now also raises tonal_conformity for
+    the exact same note, verified on real generated candidates (seed=5,
+    already established in Phase 22's own test to produce a real
+    resolved-tension shape), not just the hand-built unit-test example."""
+    from ensemble.critic import tonal_conformity
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=5, credit_resolved_tension=True)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    last_chunk = candidates[-8:]
+    without = [tonal_conformity(notes, kwargs["chord_idx"]) for _sp, kwargs, notes in last_chunk]
+    credited = [
+        tonal_conformity(notes, kwargs["chord_idx"], credit_resolved_tension=True)
+        for _sp, kwargs, notes in last_chunk
+    ]
+    assert any(c > w for c, w in zip(credited, without))
+
+
+def test_modal_chart_passes_modal_strength_into_real_generation():
+    """Phase 27: song.modal reaches PhraseGenerator.generate()'s real
+    modal_strength kwarg -- MODAL_STRENGTH_WHEN_ACTIVE when True."""
+    from ensemble.sax import MODAL_STRENGTH_WHEN_ACTIVE
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    modal_strengths = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        modal_strengths.append(kwargs.get("modal_strength"))
+        return original(self, seed_phrase, **kwargs)
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        song = build_slow_song()
+        song.modal = True
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
+                    generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7))
+        Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert modal_strengths
+    assert all(ms == MODAL_STRENGTH_WHEN_ACTIVE for ms in modal_strengths)
+
+
+def test_non_modal_chart_passes_zero_modal_strength():
+    """Phase 27: today's unchanged default -- a chart without modal: true
+    passes modal_strength=0.0, matching Wolfson's own generate() default."""
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    modal_strengths = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        modal_strengths.append(kwargs.get("modal_strength"))
+        return original(self, seed_phrase, **kwargs)
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        song = build_slow_song()  # modal=False, the default
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai",
+                    generator=sax_generator(SAX_REGISTER, target_voice_id="bass", seed=7))
+        Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert modal_strengths
+    assert all(ms == 0.0 for ms in modal_strengths)

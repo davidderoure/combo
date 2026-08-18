@@ -176,6 +176,41 @@ nothing on disk. Verified with the genuine article: two independent
 second recalling real motifs the first wrote — the only way that's possible is
 if save and load both actually work end-to-end, not just in isolation.
 
+**The critic no longer fights the generator** (Phase 27) — two concrete
+mismatches found from the "why does it still sound beginner-noodly" discussion.
+First: `tonal_conformity` never learned about the dissonance work (Phases 19-22)
+— it checked the plain, unwidened scale, so a candidate that cleared the
+dissonance gate via a resolved tension (`credit_resolved_tension`) still lost
+`tonal_conformity` points for the same note, quietly penalising exactly the
+"advanced" playing those phases were built to allow. Two real consequences this
+fixes: in `n_candidates` search, a bold candidate tied with a safe one on
+dissonance no longer automatically loses the `overall` tie-break; in
+`RehearsalMemory`, quality-weighted recall no longer systematically favours the
+safe phrasing over the bold one. `tonal_conformity` now uses `dissonance_scale`
+(the widened scale) plus the same `_is_passing_tone`/`_is_resolved_tension`
+exemptions `dissonance()` already had — checked directly before making the
+change: every existing `tonal_conformity` test's example notes land the same
+result under the new scale reference, so nothing needed updating, only new
+tests added.
+
+Second: Wolfson's own quartal/modal generation parameter, `modal_strength`
+(`PhraseGenerator.generate()`, biasing toward P4/P5 leaps — *"quartal/pentatonic
+character of modal jazz stages"*), was ported but never wired up, and would
+have fought `contour_smoothness` (`SMOOTH_INTERVAL_MAX_SEMITONES=4`) if it had
+been. Verified empirically before wiring it up: 20 real one-shot generations at
+`modal_strength=0.0` vs `1.0` show P4/P5 leaps rising from 10.0% of intervals to
+26.0% — a real, substantial effect. `Song` gains a chart-authored `modal: bool`
+field (`song/chart.py`'s `modal: true` header line; every existing chart
+defaults to `False`, unchanged) — David's own framing: for now read directly off
+the chart, the way he'd personally read the artist/date on a score to judge
+triadic vs. modal vocabulary (real stylistic knowledge that can't be
+replicated); modulating it by narrative-arc position instead is named as a real,
+separate future step, not attempted here. `contour_smoothness` gains a `modal`
+parameter tolerating P4/P5 leaps (not wider ones) when true, and
+`sax_generator` threads `song.modal` into both `modal_strength` (generation)
+and `musicality_score` (scoring) from the same place, so the two can never
+disagree.
+
 Register/phrasing/tension-and-resolution (Phases 22-24) are three pieces of a
 larger "beginner vs advanced" idea from the same listening-test discussion; side-
 slipping and an actual call-site register-narrowing switch (vs. today's single

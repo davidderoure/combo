@@ -58,6 +58,11 @@ TONAL_RESOLUTION_WEIGHT = 0.3  # blend weight for "does the last note land on a 
 SMOOTH_INTERVAL_MAX_SEMITONES = 4  # placeholder -- Grade 1 piano's own norms are far more
                                     # conservative than idiomatic jazz and aren't a valid
                                     # reference; needs real jazz-appropriate tuning.
+MODAL_LEAP_SEMITONES = frozenset({5, 7})  # P4, P5 -- the quartal leaps Wolfson's own
+                                            # modal_strength generation bias targets
+                                            # (phrase_generator.py's MODAL_P4_BONUS/
+                                            # MODAL_P5_BONUS); tolerated by
+                                            # contour_smoothness only when modal=True.
 NEAR_REPEAT_WINDOW = 4         # contour-string window length for near-repeat comparison
 NEAR_REPEAT_MAX_DISTANCE = 1   # placeholder: windows within this edit distance count as near-repeats
 DISSONANT_SEMITONE_DISTANCE = 1  # a note exactly this far from the nearest in-scale pitch
@@ -141,22 +146,50 @@ def _levenshtein(a: str, b: str) -> int:
     return prev[-1]
 
 
-def tonal_conformity(notes: list, chord_idx: int) -> float:
-    """Fraction of real notes whose pitch class is in the active chord's scale
-    (chord_to_mode/scale_pitch_classes, ensemble/wolfson/scales.py -- ported
-    Phase 8, previously unused beyond chord_tones()), blended with a bonus for
-    the phrase's FINAL note landing on an actual chord tone -- mirrors how
-    Wolfson's own voice-leading bias specifically ramps up at the end of a
-    phrase, not uniformly across it (phrase_generator.py's arc_position-scaled
-    chord-tone targeting). No real notes -> 0.0: nothing to be in- or
-    out-of-key about."""
+def tonal_conformity(
+    notes: list, chord_idx: int, extra_tolerated: frozenset = frozenset(), credit_resolved_tension: bool = False
+) -> float:
+    """Fraction of real notes that are in-scale-or-excused, blended with a
+    bonus for the phrase's FINAL note landing on an actual chord tone --
+    mirrors how Wolfson's own voice-leading bias specifically ramps up at the
+    end of a phrase, not uniformly across it (phrase_generator.py's
+    arc_position-scaled chord-tone targeting). No real notes -> 0.0: nothing
+    to be in- or out-of-key about.
+
+    Phase 27: uses the SAME scale reference and exemptions as dissonance()
+    (dissonance_scale, extra_tolerated, _is_passing_tone, and -- when
+    credit_resolved_tension -- _is_resolved_tension) rather than the plain
+    chord_to_mode scale it used through Phase 26. Checked directly before
+    making this change, not assumed: every note that clears dissonance()'s
+    badness gate as "not a clash" -- a bebop passing tone, a b5-substitution
+    tritone, a functional-context ii-V-I note, a deliberately resolved
+    tension -- was, until this phase, STILL counted against tonal_conformity,
+    quietly penalising exactly the "advanced" playing Phases 19-22 were built
+    to allow. Two real consequences this fixes: in n_candidates search, a bold
+    candidate tied with a safe one on dissonance no longer automatically loses
+    the overall tie-break; in RehearsalMemory, quality-weighted recall no
+    longer systematically favours the safe phrasing over the bold one. This is
+    a genuine, deliberate behaviour change for the scale reference itself
+    (always the widened one now, matching dissonance()'s own baseline, not
+    gated behind a flag) -- extra_tolerated/credit_resolved_tension are the
+    only "extend on integration" parts (default empty/False)."""
     real = _real_notes(notes)
     if not real:
         return 0.0
-    scale = scale_pitch_classes(chord_root(chord_idx), chord_to_mode(chord_idx))
-    scale_fraction = sum(1 for n in real if n["pitch"] % 12 in scale) / len(real)
-
+    scale = dissonance_scale(chord_idx) | extra_tolerated
     tones = chord_tones(chord_idx)
+
+    in_scale_count = 0
+    for i, n in enumerate(real):
+        pc = n["pitch"] % 12
+        if pc in scale:
+            in_scale_count += 1
+        elif _is_passing_tone(real, i):
+            in_scale_count += 1
+        elif credit_resolved_tension and _is_resolved_tension(real, i, scale, tones):
+            in_scale_count += 1
+    scale_fraction = in_scale_count / len(real)
+
     resolves = 1.0 if (tones and real[-1]["pitch"] % 12 in tones) else 0.0
 
     return (1.0 - TONAL_RESOLUTION_WEIGHT) * scale_fraction + TONAL_RESOLUTION_WEIGHT * resolves
@@ -332,16 +365,29 @@ def dissonance(
     return clashes / len(real)
 
 
-def contour_smoothness(notes: list) -> float:
+def contour_smoothness(notes: list, modal: bool = False) -> float:
     """Fraction of consecutive-note intervals within SMOOTH_INTERVAL_MAX_SEMITONES
     -- same core computation as the notebook's intervals() (signed semitone
     differences between consecutive notes). Fewer than 2 real notes -> 1.0:
-    vacuously smooth, nothing observed to be a leap."""
+    vacuously smooth, nothing observed to be a leap.
+
+    modal (Phase 27): when True, a P4 or P5 leap (MODAL_LEAP_SEMITONES) also
+    counts as smooth, on top of the existing <=4-semitone rule. Wolfson's own
+    modal_strength generation parameter biases toward exactly these two
+    intervals ("quartal/pentatonic character of modal jazz stages") -- without
+    this, contour_smoothness would mark down the very leaps modal_strength is
+    trying to produce. Default False reproduces today's behaviour exactly for
+    every existing call site. A leap wider than P5 (e.g. a 9th) still counts
+    as unsmooth regardless -- this widens the tolerance for a specific,
+    named vocabulary, not a general loosening."""
     pitches = [n["pitch"] for n in _real_notes(notes)]
     if len(pitches) < 2:
         return 1.0
     intervals = [pitches[i + 1] - pitches[i] for i in range(len(pitches) - 1)]
-    smooth = sum(1 for iv in intervals if abs(iv) <= SMOOTH_INTERVAL_MAX_SEMITONES)
+    smooth = sum(
+        1 for iv in intervals
+        if abs(iv) <= SMOOTH_INTERVAL_MAX_SEMITONES or (modal and abs(iv) in MODAL_LEAP_SEMITONES)
+    )
     return smooth / len(intervals)
 
 
@@ -526,7 +572,8 @@ class MusicalityScore:
 
 
 def musicality_score(
-    notes: list, chord_idx: int, seed_phrase: list, register: Tuple[int, int], weights: dict = None
+    notes: list, chord_idx: int, seed_phrase: list, register: Tuple[int, int], weights: dict = None,
+    extra_tolerated: frozenset = frozenset(), credit_resolved_tension: bool = False, modal: bool = False,
 ) -> MusicalityScore:
     """weights, if given, overrides DEFAULT_WEIGHTS for the overall combination
     only -- every sub-score is still computed and reported regardless (a metric
@@ -538,11 +585,19 @@ def musicality_score(
 
     register (Phase 24): required, no sensible default exists (same reasoning
     as chord_idx/seed_phrase having none) -- the active register bound
-    register_usage() needs, which this function never received before."""
+    register_usage() needs, which this function never received before.
+
+    extra_tolerated/credit_resolved_tension (Phase 27): passed straight through
+    to tonal_conformity, the SAME context dissonance() is judged against
+    elsewhere in ensemble/sax.py's selection loop -- keeps the badness gate and
+    this positive quality signal in agreement about what counts as legitimate.
+    modal (Phase 27): passed straight through to contour_smoothness, matching
+    whichever modal_strength was used for this same candidate's generation.
+    All three default to today's pre-Phase-27 behaviour."""
     weights = weights if weights is not None else DEFAULT_WEIGHTS
     scores = {
-        "tonal_conformity": tonal_conformity(notes, chord_idx),
-        "contour_smoothness": contour_smoothness(notes),
+        "tonal_conformity": tonal_conformity(notes, chord_idx, extra_tolerated, credit_resolved_tension),
+        "contour_smoothness": contour_smoothness(notes, modal),
         "repetition": repetition(notes),
         "call_response_relatedness": call_response_relatedness(seed_phrase, notes),
         "singability": singability(notes),

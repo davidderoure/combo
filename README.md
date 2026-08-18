@@ -409,6 +409,33 @@ Verified with the genuine article, not assumed: two independent
 motifs the first wrote — only possible if save and load both actually work
 end-to-end.
 
+**The critic no longer fights the generator** (Phase 27) — two concrete
+mismatches found from a "why does it still sound beginner-noodly" discussion.
+`tonal_conformity` never learned about the dissonance work (Phases 19-22): it
+checked the plain, unwidened scale, so a candidate that cleared the dissonance
+gate via a resolved tension still lost `tonal_conformity` points for the same
+note — quietly penalising exactly the "advanced" playing those phases were
+built to allow, both in `n_candidates` search (a bold candidate tied on
+dissonance could still lose the `overall` tie-break) and in `RehearsalMemory`
+(quality-weighted recall systematically favoured the safe phrasing). Now uses
+`dissonance_scale` plus the same passing-tone/resolved-tension exemptions
+`dissonance()` already had — checked directly first: every existing test's
+example notes land the same result under the new reference, so nothing needed
+updating, only new tests added. Separately: Wolfson's own `modal_strength`
+generation parameter (biases toward P4/P5 quartal leaps) was ported but never
+wired up, and would have fought `contour_smoothness`
+(`SMOOTH_INTERVAL_MAX_SEMITONES=4`) if it had been. Verified empirically first:
+20 real one-shot generations at `modal_strength=0.0` vs `1.0` show P4/P5 leaps
+rising from 10.0% to 26.0% of intervals — a real effect. `Song` gains a
+chart-authored `modal: bool` (`modal: true` in the chart header; every existing
+chart defaults `False`, unchanged) — David's framing: for now read directly off
+the chart the way he'd read the artist/date on a score to judge triadic vs.
+modal vocabulary; modulating it by narrative-arc position instead is named as a
+real, separate future step. `contour_smoothness` tolerates P4/P5 (not wider)
+leaps when `modal=True`, and `sax_generator` threads `song.modal` into both
+`modal_strength` and `musicality_score` from the same place, so generation and
+scoring can never disagree.
+
 Register, phrasing, and tension-and-resolution (Phases 22-24) are three pieces
 of a larger "beginner vs advanced" idea from the same listening-test
 discussion; side-slipping and an actual call-site register-narrowing *switch*

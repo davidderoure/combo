@@ -12,7 +12,9 @@ from ensemble.critic import (
     BREATH_FRACTION_WIDTH,
     DEFAULT_WEIGHTS,
     MIN_BREATH_BEATS,
+    MODAL_LEAP_SEMITONES,
     TARGET_BREATH_FRACTION,
+    TONAL_RESOLUTION_WEIGHT,
     _contour_string,
     _is_passing_tone,
     _is_resolved_tension,
@@ -84,6 +86,42 @@ def test_tonal_conformity_scores_out_of_key_non_resolving_phrase_zero():
 
 def test_tonal_conformity_no_real_notes_is_zero():
     assert tonal_conformity([{"pitch": REST_PITCH, "duration_beats": 1.0}], C_MAJOR) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# tonal_conformity's Phase 27 consistency with dissonance()'s own tolerances
+# ---------------------------------------------------------------------------
+# F_DOM's dissonance_scale is {0,2,3,4,5,7,9,10,11} (missing 1, 6, 8);
+# chord_tones(F_DOM) is {3, 5, 9}.
+
+
+def test_tonal_conformity_extra_tolerated_widens_what_counts():
+    # F# (pc6) over F7 is outside dissonance_scale(F_DOM) entirely -- 0.0
+    # without extra_tolerated; explicitly tolerated, it counts toward
+    # scale_fraction (though it still isn't a chord tone, so it doesn't earn
+    # the resolution bonus).
+    notes = notes_from_pitches([66])
+    assert tonal_conformity(notes, F_DOM) == 0.0
+    assert tonal_conformity(notes, F_DOM, extra_tolerated=frozenset({6})) == pytest.approx(0.7)
+
+
+def test_tonal_conformity_counts_a_genuine_passing_tone_unconditionally():
+    # Same passing-tone shape as dissonance()'s own precedent test: G, G#, A
+    # over F7 -- G# (pc8) is outside the scale but a genuine passing tone,
+    # excused the same way it is in dissonance(), with no flag needed.
+    notes = notes_from_pitches([67, 68, 69])
+    assert tonal_conformity(notes, F_DOM) == 1.0
+
+
+def test_tonal_conformity_counts_a_resolved_tension_only_when_credited():
+    # C, Db (leap in), Eb (step out, a chord tone) -- Db (pc1) clashes and
+    # isn't a passing tone (leapt into), but IS a resolved tension. Before/
+    # after proof: uncounted by default, counted when credit_resolved_tension
+    # =True (matching dissonance()'s own credit_resolved_tension exactly).
+    notes = notes_from_pitches([60, 73, 75])
+    without = (1.0 - TONAL_RESOLUTION_WEIGHT) * (2 / 3) + TONAL_RESOLUTION_WEIGHT * 1.0
+    assert tonal_conformity(notes, F_DOM) == pytest.approx(without)
+    assert tonal_conformity(notes, F_DOM, credit_resolved_tension=True) == 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -387,6 +425,25 @@ def test_contour_smoothness_fewer_than_two_notes_is_vacuously_one():
     assert contour_smoothness([]) == 1.0
 
 
+def test_contour_smoothness_p4_and_p5_leaps_smooth_only_when_modal():
+    assert MODAL_LEAP_SEMITONES == frozenset({5, 7})
+    p4 = notes_from_pitches([60, 65])  # interval 5, a P4
+    p5 = notes_from_pitches([60, 67])  # interval 7, a P5
+    assert contour_smoothness(p4) == 0.0
+    assert contour_smoothness(p5) == 0.0
+    assert contour_smoothness(p4, modal=True) == 1.0
+    assert contour_smoothness(p5, modal=True) == 1.0
+
+
+def test_contour_smoothness_modal_does_not_excuse_wider_leaps():
+    # A major 6th (9 semitones) -- outside MODAL_LEAP_SEMITONES -- stays
+    # unsmooth even with modal=True. Widens tolerance for a specific, named
+    # vocabulary, not a general loosening.
+    notes = notes_from_pitches([60, 69])
+    assert contour_smoothness(notes) == 0.0
+    assert contour_smoothness(notes, modal=True) == 0.0
+
+
 # ---------------------------------------------------------------------------
 # repetition
 # ---------------------------------------------------------------------------
@@ -657,3 +714,24 @@ def test_musicality_score_weights_can_be_overridden_per_call():
         default_score.singability * DEFAULT_WEIGHTS["singability"]
     )
     assert zeroed_score.overall == pytest.approx(expected_overall_without_singability)
+
+
+def test_musicality_score_threads_extra_tolerated_and_credit_resolved_tension_into_tonal_conformity():
+    """Phase 27: proof the new params actually reach tonal_conformity, not
+    just that tonal_conformity itself works in isolation."""
+    notes = notes_from_pitches([60, 73, 75])  # C, Db (leap in), Eb (step out, chord tone)
+    seed = notes_from_pitches([60, 62, 64])
+    default_score = musicality_score(notes, F_DOM, seed, REGISTER)
+    credited_score = musicality_score(notes, F_DOM, seed, REGISTER, credit_resolved_tension=True)
+    assert credited_score.tonal_conformity > default_score.tonal_conformity
+    assert credited_score.overall > default_score.overall
+
+
+def test_musicality_score_threads_modal_into_contour_smoothness():
+    """Phase 27: proof `modal` actually reaches contour_smoothness."""
+    notes = notes_from_pitches([60, 65, 60, 67])  # P4, P4, P5 leaps throughout
+    seed = notes_from_pitches([60, 62, 64])
+    default_score = musicality_score(notes, C_MAJOR, seed, REGISTER)
+    modal_score = musicality_score(notes, C_MAJOR, seed, REGISTER, modal=True)
+    assert modal_score.contour_smoothness > default_score.contour_smoothness
+    assert modal_score.overall > default_score.overall

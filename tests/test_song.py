@@ -96,3 +96,47 @@ def test_song_transpose():
     assert up_a_step.key == Chord.parse("G").root
     # original is untouched
     assert song.chord_at(0.0) == Chord.parse("F7")
+
+
+# ---------------------------------------------------------------------------
+# Song.modal (Phase 27) -- a chart-authored style choice
+# ---------------------------------------------------------------------------
+
+
+def test_chart_without_modal_header_defaults_false():
+    # Every existing chart, including blues_in_f.chart -- must keep working
+    # unchanged.
+    song = parse_chart((CHARTS_DIR / "blues_in_f.chart").read_text())
+    assert song.modal is False
+
+
+def test_chart_with_modal_true_header_parses_to_modal_song():
+    text = "title: Modal Tune\ntempo: 120\nmodal: true\n\nchanges:\nDm7\n\nform:\nSolos x1\n"
+    song = parse_chart(text)
+    assert song.modal is True
+
+
+def test_chart_with_modal_header_case_insensitive_and_yes_variant():
+    text = "title: Modal Tune\ntempo: 120\nmodal: YES\n\nchanges:\nDm7\n\nform:\nSolos x1\n"
+    assert parse_chart(text).modal is True
+
+
+def test_modal_chart_round_trips_through_format_chart():
+    text = "title: Modal Tune\ntempo: 120\nmodal: true\n\nchanges:\nDm7\n\nform:\nSolos x1\n"
+    song = parse_chart(text)
+    reparsed = parse_chart(format_chart(song))
+    assert reparsed.modal is True
+
+
+def test_non_modal_chart_format_chart_omits_the_header():
+    song = parse_chart((CHARTS_DIR / "blues_in_f.chart").read_text())
+    assert "modal:" not in format_chart(song)
+
+
+def test_song_transpose_preserves_modal():
+    song = parse_chart((CHARTS_DIR / "blues_in_f.chart").read_text())
+    modal_song = Song(
+        title=song.title, changes=song.changes, form=song.form,
+        tempo_bpm=song.tempo_bpm, feel=song.feel, key=song.key, modal=True,
+    )
+    assert modal_song.transpose(2).modal is True

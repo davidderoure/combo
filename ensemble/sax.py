@@ -138,6 +138,23 @@ same discussion, also deliberately not attempted here -- a call-site register
 choice and a different critic dimension (rest structure) respectively, neither of
 which this parameter touches.
 
+The critic no longer fights the generator (Phase 27): `musicality_score`'s call
+here passes `extra_tolerated`/`credit_resolved_tension` into `tonal_conformity`
+(the SAME context `dissonance()` above is judged against — until this phase,
+`tonal_conformity` still checked the plain, unwidened scale, so a candidate that
+cleared the dissonance gate via a resolved tension still lost `tonal_conformity`
+points for the exact same note) and `modal=song.modal` into `contour_smoothness`
+(so a genuine P4/P5 quartal leap, once `modal_strength` is actually asked to
+produce more of them below, isn't marked down as "unsmooth"). `Song.modal`
+(`song/song.py`, Phase 27) is a chart-authored style choice — David's own framing:
+for now it's read off the chart the way he'd read it off a score's artist/date,
+with modulating it by narrative-arc position named as a real, separate future
+step, not attempted here. `MODAL_STRENGTH_WHEN_ACTIVE` feeds Wolfson's own
+`modal_strength` generation parameter (ported, previously always 0.0/unused) —
+verified empirically, not assumed, that it has a real effect: 20 real one-shot
+generations at `modal_strength=0.0` vs `1.0` show P4/P5 leaps rising from 10.0%
+of intervals to 26.0%.
+
 Explicitly deferred (see DESIGN.md §12 for the full list): all ~10 of
 PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, register
 contrast, etc. — motif_targets/motif_strength are now wired, via memory) are left
@@ -168,6 +185,13 @@ DEFAULT_PLAN_BARS = 4  # matches Wolfson's own MAX_PHRASE_BEATS=16.0 -- 4 bars a
 DEFAULT_MOTIF_STRENGTH = 1.0  # placeholder, same status as INTENSITY_SPREAD
                                # (comping.py) / REFERENCE_MAX_DENSITY (director.py)
                                # -- needs real tuning once there's a way to hear it.
+MODAL_STRENGTH_WHEN_ACTIVE = 1.0  # placeholder, same status as above -- full
+                                    # quartal/pentatonic bias (Wolfson's own
+                                    # modal_strength, phrase_generator.py) when
+                                    # song.modal is True (Phase 27), verified
+                                    # empirically to have a real effect (20 real
+                                    # one-shot generations: P4/P5 leaps go from
+                                    # 10.0% of intervals at 0.0 to 26.0% at 1.0).
 
 # combo's 17 canonical qualities (song/chord.py's _QUALITY_ALIASES values) mapped
 # onto Wolfson's 4 harmonic-function classes. Root translation is the identity
@@ -479,9 +503,12 @@ def sax_generator(
                     rhythmic_density=director_signal.intensity,
                     motif_targets=motif_targets,
                     motif_strength=DEFAULT_MOTIF_STRENGTH if motif_targets else 0.0,
+                    modal_strength=MODAL_STRENGTH_WHEN_ACTIVE if song.modal else 0.0,
                 )
                 candidate_score = musicality_score(
-                    candidate_notes, chord_idx, seed_phrase, register, weights=critic_weights
+                    candidate_notes, chord_idx, seed_phrase, register, weights=critic_weights,
+                    extra_tolerated=functional_scale, credit_resolved_tension=credit_resolved_tension,
+                    modal=song.modal,
                 )
                 candidate_scores.append(candidate_score.overall)
                 # (-dissonance, adherence, overall) lexicographic key: badness

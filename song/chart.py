@@ -21,6 +21,12 @@ fake-book chart gets written down.
 throughout — no time-signature support yet). `%` repeats the previous
 chord. `form:` lists sections in order as "Name xN" (N repeats through the
 changes) or "Name x?" for an open-ended section (repeats=None).
+
+An optional `modal: true` header line (Phase 27, DESIGN.md §12) marks the
+whole chart as triadic vs. quartal/modal — a David-authored style choice
+(mirroring how a player would read the artist/date on a score), not
+inferred. Absent, or any other value, means False — every existing chart
+keeps working unchanged.
 """
 
 import re
@@ -73,6 +79,7 @@ def parse_chart(text: str) -> Song:
         tempo_bpm=float(header["tempo"]) if "tempo" in header else 120.0,
         feel=header.get("feel", "swing"),
         key=Chord.parse(key).root if key else None,
+        modal=header.get("modal", "").lower() in ("true", "yes"),
     )
 
 
@@ -120,6 +127,8 @@ def format_chart(song: Song) -> str:
     lines = [f"title: {song.title}", f"tempo: {song.tempo_bpm:g}", f"feel: {song.feel}"]
     if song.key is not None:
         lines.append(f"key: {Chord(song.key, 'maj')}")
+    if song.modal:
+        lines.append("modal: true")
     lines.append("")
     lines.append("changes:")
 
