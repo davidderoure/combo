@@ -551,6 +551,42 @@ def motif_adherence(notes: list, motif_targets: list) -> float:
     return 1.0 if any(target in phrase_motifs for target in motif_targets) else 0.0
 
 
+def chord_change_landing(notes: list, chord_idx: int, modal: bool = False) -> float:
+    """1.0 if the phrase's FIRST real note lands on a genuine chord tone of
+    chord_idx -- tertian (chord_tones()), or a quartal stack (_quartal_tones,
+    Phase 40) when modal=True -- else 0.0 (Phase 41). Symmetric, in shape, to
+    tonal_conformity's own internal end-of-phrase `resolves` check (the LAST
+    note against its own chord) -- this is the same idea applied to the
+    phrase's OPENING, prompted directly by a design discussion: "one
+    technique is to land on a strong chord tone right on the beat of the
+    new chord."
+
+    Deliberately the smallest correct version: checks only the first real
+    note (mirroring `resolves`' own binary, no-stepwise-approach treatment),
+    not any anticipation of the chord change from BEFORE it happens (a
+    different, larger idea needing the CURRENT chunk's generation to know
+    about the NEXT chord, which PhraseGenerator.generate() has no mechanism
+    for -- one chord_idx per call) nor a multi-note "quickly resolves"
+    allowance -- both deliberately not attempted here.
+
+    Deliberately NOT part of MusicalityScore/DEFAULT_WEIGHTS below, same
+    precedent as motif_adherence/corpus_familiarity above -- "landing well"
+    is only a meaningful question when this chunk actually follows a REAL
+    chord change (ensemble/sax.py's own job to detect, via its own chord_idx
+    history -- a chunk boundary that's merely a plan_bars planning-horizon
+    cap on a held chord, not a harmonic event, has nothing new to land on),
+    not something this Song-agnostic module can determine on its own.
+
+    No real notes, or no chord tones for this chord_idx (NC) -> 0.0."""
+    real = _real_notes(notes)
+    if not real:
+        return 0.0
+    tones = _quartal_tones(chord_root(chord_idx)) if modal else chord_tones(chord_idx)
+    if not tones:
+        return 0.0
+    return 1.0 if real[0]["pitch"] % 12 in tones else 0.0
+
+
 def corpus_familiarity(notes: list, chord_quality: int, corpus: CorpusMotifs) -> float:
     """Fraction of this candidate's own pitch+duration motifs (pooled) that
     were actually seen in the Weimar Jazz Database under the SAME chord

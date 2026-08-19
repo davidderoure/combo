@@ -183,6 +183,81 @@ def test_phrase_boundary_rest_duration_is_deterministic_given_a_seed():
     assert dispensed_gap_at_second_chunk() == dispensed_gap_at_second_chunk()
 
 
+def test_chord_change_landing_inactive_without_a_real_chord_change():
+    """Phase 41: build_slow_song() is a single 8-bar F7 hold -- chunk 2 has
+    the SAME chord_idx as chunk 1 (just capped by plan_bars, not a real
+    harmonic change), so generate.landing_log's second entry must stay 0.0
+    -- the concrete "gate correctly stays off" proof."""
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=3, seed=5)
+    sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+    Session(song=build_slow_song(), voices=[bass, sax]).generate()
+
+    assert len(sax_gen.landing_log) == 2  # 2 chunks
+    assert sax_gen.landing_log == [0.0, 0.0]
+
+
+def test_chord_change_landing_reaches_real_selection_on_a_real_chord_change():
+    """Phase 41: build_ii_v_i_song() changes chord every bar, so chunk 2
+    (Dm7 -> G7) follows a genuine chord change -- verified directly via
+    song.chord_at, not assumed. Real candidates show genuine landing
+    variance, and the winner identified via the real 5-term lexicographic
+    key matches what sax_generator actually dispensed."""
+    from ensemble.critic import chord_change_landing, dissonance, motif_adherence, musicality_score
+    from ensemble.sax import _functional_tonic_scale, chord_to_wolfson_index
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        song = build_ii_v_i_song()
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    # Real chord change, verified directly -- chunk 2 starts at bar 1.
+    chunk1_chord = chord_to_wolfson_index(song.chord_at(0.0))
+    chunk2_start = BEATS_PER_BAR
+    chunk2_chord = chord_to_wolfson_index(song.chord_at(chunk2_start))
+    assert chunk1_chord != chunk2_chord  # Dm7 -> G7
+
+    last_chunk = candidates[-8:]
+    landing_values = [chord_change_landing(notes, kwargs["chord_idx"]) for _sp, kwargs, notes in last_chunk]
+    assert len(set(landing_values)) > 1  # genuine variance, not degenerate
+
+    functional_scale = _functional_tonic_scale(song, chunk2_start)
+    scored = [
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, extra_tolerated=functional_scale)
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
+    keys = [
+        (
+            -dissonance(notes, kwargs["chord_idx"], extra_tolerated=functional_scale),
+            motif_adherence(notes, []),
+            landing,
+            0.0,  # corpus_score -- no corpus configured
+            score.overall,
+        )
+        for (seed_phrase, kwargs, notes), landing, score in zip(last_chunk, landing_values, scored)
+    ]
+    winner_notes = last_chunk[keys.index(max(keys))][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and chunk2_start <= e.start_beat < chunk2_start + BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
 def test_sax_events_never_cross_their_own_bar_boundary():
     timeline = make_session(seed=3).generate()
     sax_events = [e for e in timeline if e.voice_id == "sax"]

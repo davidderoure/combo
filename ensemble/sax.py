@@ -204,6 +204,27 @@ not a double standard. David separately named a related but deliberately deferre
 idea while discussing this: real players often anticipate an imminent chord change
 rather than merely continue across it — not attempted here.
 
+Landing on a strong tone at a real chord change (Phase 41, DESIGN.md §12):
+following the `sustain_quality` discussion, David asked how two chord-change
+techniques fit the architecture — landing on a strong chord tone right on the beat
+of a new chord, and the harder "outside then inside" (side-slipping) technique.
+Scoped the smaller one: `chord_change_landing` (`ensemble/critic.py`) checks
+whether a candidate's own first real note lands on a genuine chord tone, gated
+into the selection key (between `motif_adherence` and `corpus_score`) only when
+this chunk actually follows a REAL chord change — tracked as this voice's own
+`previous_chord_idx` closure state, since `_bars_until_chord_change` can also cap
+a chunk at `plan_bars` on a chord that hasn't actually changed, which isn't a real
+"landing" occasion. A real, honest wrinkle: Phase 39's boundary rest means the
+winning candidate's first real note now lands slightly AFTER the new chord's
+downbeat, not exactly on it — a real improvement over an arbitrary pitch, not
+literally "on the beat." Side-slipping stays explicitly deferred, as it has
+throughout this project (Phase 19/22) — it needs real generation-time mechanics
+(transposing a motif and bringing it back), not a scoring check; one idea worth
+keeping for later: relaxing the dissonance gate for a few beats before a change
+(mirroring `toggle_dissonance_avoidance`) and requiring this landing check to pass
+afterward would let `n_candidates` search approximate it almost entirely out of
+already-existing pieces.
+
 Explicitly deferred (see DESIGN.md §12 for the full list): all ~10 of
 PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, register
 contrast, etc. — motif_targets/motif_strength are now wired, via memory) are left
@@ -223,7 +244,15 @@ from typing import List, Optional, Tuple
 from song.chord import Chord
 
 from .corpus_motifs import CorpusMotifs
-from .critic import DEFAULT_WEIGHTS, corpus_familiarity, dissonance, dissonance_scale, motif_adherence, musicality_score
+from .critic import (
+    DEFAULT_WEIGHTS,
+    chord_change_landing,
+    corpus_familiarity,
+    dissonance,
+    dissonance_scale,
+    motif_adherence,
+    musicality_score,
+)
 from .memory import RehearsalMemory
 from .timeline import BEATS_PER_BAR, NoteEvent, Timeline
 from .voice import Generator
@@ -604,6 +633,11 @@ def sax_generator(
                                        # phrase-boundary rest below (no rest before
                                        # the very first chunk -- nothing to separate
                                        # it from)
+    previous_chord_idx = {"value": None}  # Phase 41 -- this voice's own chord_idx
+                                            # from the LAST chunk it built, used to
+                                            # detect a REAL chord change (not just a
+                                            # plan_bars planning-horizon cap -- see
+                                            # _bars_until_chord_change) between chunks
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
         if director_signal.gesture is not None and director_signal.gesture.name == "toggle_singability":
@@ -620,6 +654,12 @@ def sax_generator(
             chord_idx = chord_to_wolfson_index(song.chord_at(bar_start))
             chord_quality = chord_idx % N_QUALITIES
             functional_scale = _functional_tonic_scale(song, bar_start)
+
+            # Phase 41: a REAL chord change (not just a plan_bars planning-
+            # horizon cap on a held chord -- see _bars_until_chord_change)
+            # between the previous chunk this voice built and this one.
+            is_real_chord_change = previous_chord_idx["value"] is not None and previous_chord_idx["value"] != chord_idx
+            previous_chord_idx["value"] = chord_idx
 
             motif_targets = []
             if memory is not None:
@@ -698,9 +738,16 @@ def sax_generator(
                     if corpus is not None and is_bias_distorted
                     else 0.0
                 )
+                # Phase 41: landing well only matters right after a REAL
+                # chord change -- 0.0 for every candidate uniformly
+                # otherwise, provably identical to the pre-Phase-41 key in
+                # that case, same "extend on integration" argument as
+                # corpus_score's own gating above.
+                landing = chord_change_landing(candidate_notes, chord_idx, modal=song.modal) if is_real_chord_change else 0.0
                 key = (
                     -d if dissonance_mode["enabled"] else 0.0,
                     motif_adherence(candidate_notes, motif_targets),
+                    landing,
                     corpus_score,
                     candidate_score.overall,
                 )
@@ -710,6 +757,7 @@ def sax_generator(
             generate.last_candidate_scores = candidate_scores
             generate.dissonance_log.append(best_dissonance)
             generate.motif_adherence_log.append(best_key[1])
+            generate.landing_log.append(best_key[2])
             generate.winning_score_log.append(best_score)
 
             # Phase 39: a deliberate rest between chunks -- "speaking in
@@ -755,6 +803,8 @@ def sax_generator(
     generate.critic_weights = critic_weights  # exposed for testing -- see module docstring
     generate.last_candidate_scores = []  # populated on the first chunk-build; exposed for testing
     generate.motif_adherence_log = []  # one entry per chunk-build, the WINNING candidate's motif_adherence
+    generate.landing_log = []  # one entry per chunk-build (Phase 41), the WINNING candidate's
+                                 # chord_change_landing -- 0.0 whenever is_real_chord_change was False
     generate.dissonance_log = []  # one entry per chunk-build, the WINNING candidate's actual dissonance
                                     # (Phase 18) -- always the real value, even when dissonance_mode is
                                     # disabled and isn't currently driving selection (Phase 20).

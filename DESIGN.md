@@ -921,6 +921,34 @@ meaningful variance (0.17–0.60, mean 0.42), confirmed again at scale via
 `critic_baseline.py --self-test-only` (900 real chunks, mean 0.4626) — not a
 degenerate signal.
 
+**`chord_change_landing` — landing on a strong tone at a real chord change
+(Phase 41).** Following the `sustain_quality` discussion, David asked how two
+chord-change techniques fit combo's architecture: landing on a strong chord
+tone right on the beat of a new chord, and the harder "outside then inside"
+(side-slipping) technique — agreed to scope the smaller one first. New
+standalone function (not a `MusicalityScore` field, same precedent as
+`dissonance`/`motif_adherence`/`corpus_familiarity`): checks whether a
+candidate's own first real note lands on a genuine chord tone. Gated into the
+selection key (between `motif_adherence` and `corpus_score`) only when this
+chunk actually follows a REAL chord change — new `previous_chord_idx` closure
+state in `ensemble/sax.py`, since `_bars_until_chord_change` can also cap a
+chunk at `plan_bars` on a chord that hasn't changed at all, which isn't a real
+landing occasion. Checked empirically before building: the model's own natural
+(unbiased) first-note-lands rate over Bb7 was only 25% (10/40 one-shot
+generations) — real room for search to improve on, confirmed directly in
+`ensemble/demo.py`'s new comparison (n_candidates=1: 0.60, n_candidates=8:
+0.73, over a real chord-changing chart). A real, honest wrinkle, stated
+plainly: Phase 39's boundary rest means the winning candidate's first real
+note now lands slightly *after* the new chord's downbeat, not exactly on it —
+a real improvement over an arbitrary pitch, not literally "on the beat."
+Side-slipping stays explicitly deferred, as it has throughout this project
+(Phase 19/22) — real generation-time mechanics (transposing a motif and
+bringing it back), not a scoring check; one idea worth keeping for later:
+relaxing the dissonance gate for a few beats before a change (mirroring
+`toggle_dissonance_avoidance`) and requiring this landing check afterward
+would let `n_candidates` search approximate it almost entirely out of
+already-existing pieces.
+
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a

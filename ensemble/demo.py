@@ -456,6 +456,32 @@ def demo_sax_wolfson(chart_path: Path) -> None:
         print(f"    chunk {i}: call_response_relatedness off={off_score.call_response_relatedness:.3f} "
               f"on={on_score.call_response_relatedness:.3f}")
 
+    print("\n  Landing on a strong tone at a real chord change (Phase 41):")
+    print("  chord_change_landing checks whether a candidate's own first real")
+    print("  note lands on a genuine chord tone -- gated into the selection key")
+    print("  only when this chunk actually follows a REAL chord change, not just")
+    print("  a plan_bars planning-horizon cap. Shown here: natural (n_candidates=1)")
+    print("  vs. searched (n_candidates=8) landing rate over a chart with a real")
+    print("  chord change every bar:\n")
+
+    changing_song = Song(
+        title="ii-V changes", changes=Changes(
+            [ChangesEvent(Chord.parse("Dm7"), BEATS_PER_BAR), ChangesEvent(Chord.parse("G7"), BEATS_PER_BAR)]
+        ),
+        form=[Section("A", 8)], tempo_bpm=120,
+    )
+
+    def landing_rate(n_candidates: int) -> float:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=n_candidates, seed=11)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        Session(song=changing_song, voices=[bass, sax]).generate(mode=MACHINE_SPEED)
+        active = sax_gen.landing_log[1:]  # every chunk after the first follows a real change on this chart
+        return sum(active) / len(active) if active else 0.0
+
+    print(f"    n_candidates=1: landing rate={landing_rate(1):.2f}")
+    print(f"    n_candidates=8: landing rate={landing_rate(8):.2f}")
+
     print("\n  A deliberate rest between chunks (Phase 39) -- \"speaking in")
     print("  sentences\": Wolfson's own self-play generates one phrase, plays it")
     print("  out, THEN feeds it back -- silence between phrases falls out of that")

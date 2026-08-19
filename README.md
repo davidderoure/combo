@@ -943,6 +943,27 @@ real call. Verified empirically: 15 real generations over F7 showed real
 variance (0.17–0.60, mean 0.42), confirmed at scale via `critic_baseline.py
 --self-test-only` (900 chunks, mean 0.4626).
 
+**`chord_change_landing` — landing on a strong tone at a real chord change**
+(Phase 41). David asked how two chord-change techniques fit combo's
+architecture: landing on a strong chord tone right on the beat of a new
+chord, and the harder "outside then inside" (side-slipping) technique —
+scoped the smaller one first. New standalone function (like `dissonance`/
+`motif_adherence`/`corpus_familiarity`, not a `MusicalityScore` field):
+checks whether a candidate's first real note lands on a genuine chord tone.
+Gated into the selection key only when the chunk actually follows a REAL
+chord change — new `previous_chord_idx` closure state, since a chunk
+boundary can also just be a `plan_bars` planning-horizon cap on a chord that
+hasn't changed. Checked empirically first: the model's natural (unbiased)
+landing rate over Bb7 was only 25% (10/40) — real room to improve, confirmed
+in `ensemble/demo.py` (n_candidates=1: 0.60, n_candidates=8: 0.73, over a
+real chord-changing chart). A real wrinkle, stated plainly: Phase 39's
+boundary rest means the first note now lands slightly *after* the downbeat,
+not exactly on it. Side-slipping stays explicitly deferred (Phase 19/22's
+own precedent) — it needs real generation-time mechanics, not a scoring
+check; one idea for later: relaxing the dissonance gate briefly before a
+change and requiring this landing check afterward, approximating it almost
+entirely from existing pieces.
+
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
 in Phase 5 (every phase since had repeated some version of "a director-emitted

@@ -26,6 +26,7 @@ from ensemble.critic import (
     _semitones_to_scale,
     _widened_mode_scale,
     call_response_relatedness,
+    chord_change_landing,
     contour_smoothness,
     corpus_familiarity,
     dissonance,
@@ -986,6 +987,40 @@ def test_musicality_score_threads_modal_into_sustain_quality():
     score = musicality_score(notes, C_MAJOR, [], REGISTER, modal=True)
     assert score.sustain_quality == sustain_quality(notes, C_MAJOR, modal=True)
     assert score.sustain_quality == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
+# chord_change_landing (Phase 41)
+# C_MAJOR = root 0 (C); tertian chord_tones(C_MAJOR) = {0, 4, 11} (C, E, B).
+# _quartal_tones(0) = {0, 5, 10} (C, F, Bb).
+# ---------------------------------------------------------------------------
+
+
+def test_chord_change_landing_no_notes_is_zero():
+    assert chord_change_landing([], C_MAJOR) == 0.0
+
+
+def test_chord_change_landing_first_note_on_chord_tone_is_one():
+    notes = notes_from_pitches([60, 62, 64])  # C (tone), D, E
+    assert chord_change_landing(notes, C_MAJOR) == 1.0
+
+
+def test_chord_change_landing_first_note_off_chord_tone_is_zero():
+    notes = notes_from_pitches([62, 60, 64])  # D (not a tone), C, E
+    assert chord_change_landing(notes, C_MAJOR) == 0.0
+
+
+def test_chord_change_landing_only_the_first_note_matters():
+    # Starts off-tone (D), later notes ARE tones -- still 0.0, only the
+    # opening counts, mirroring resolves' own last-note-only treatment.
+    notes = notes_from_pitches([62, 60, 64, 71])
+    assert chord_change_landing(notes, C_MAJOR) == 0.0
+
+
+def test_chord_change_landing_modal_uses_quartal_tones_instead_of_tertian():
+    notes = notes_from_pitches([65])  # F -- quartal tone of C, not tertian
+    assert chord_change_landing(notes, C_MAJOR, modal=False) == 0.0
+    assert chord_change_landing(notes, C_MAJOR, modal=True) == 1.0
 
 
 # ---------------------------------------------------------------------------
