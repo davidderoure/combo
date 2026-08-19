@@ -16,7 +16,7 @@ from ensemble.corpus_motifs import CorpusMotifs
 from ensemble.director import Director, DirectorSignal, constant_director_source
 from ensemble.generators import chord_tone_generator
 from ensemble.memory import RehearsalMemory
-from ensemble.sax import DEFAULT_MOTIF_STRENGTH, sax_generator
+from ensemble.sax import DEFAULT_MOTIF_STRENGTH, PHRASE_BOUNDARY_REST_BEATS, sax_generator
 from ensemble.session import Session
 from ensemble.timeline import BEATS_PER_BAR
 from ensemble.voice import Voice
@@ -137,6 +137,50 @@ def test_own_voice_id_adds_self_history_to_the_seed_on_the_second_chunk():
     expected_own = _build_seed_phrase(timeline, "sax", since_beat, second_chunk_start)
     assert expected_own  # the real proof self-history exists to add
     assert second_seed == expected_bass + expected_own
+
+
+def test_phrase_boundary_rest_creates_a_real_gap_at_the_second_chunk():
+    """Phase 39: build_slow_song() always produces exactly 2 chunks. The
+    first chunk's earliest dispensed sax event starts at beat 0.0 -- no
+    boundary rest before the very first phrase of the performance. The
+    second chunk's earliest dispensed sax event must start strictly after
+    the chunk's own start beat, by at least min(PHRASE_BOUNDARY_REST_BEATS)
+    -- a real, structural gap."""
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=5)
+    sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+    timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+
+    sax_events = sorted([e for e in timeline if e.voice_id == "sax"], key=lambda e: e.start_beat)
+    assert sax_events[0].start_beat == 0.0  # no boundary rest before the very first phrase
+
+    second_chunk_start = 4 * BEATS_PER_BAR  # DEFAULT_PLAN_BARS=4
+    second_chunk_events = [e for e in sax_events if e.start_beat >= second_chunk_start]
+    assert second_chunk_events  # a real, non-empty second chunk
+    gap = second_chunk_events[0].start_beat - second_chunk_start
+    assert gap >= min(PHRASE_BOUNDARY_REST_BEATS)
+
+
+def test_chunks_dispensed_counts_real_chunk_builds():
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=5)
+    sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+    Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    assert sax_gen.chunks_dispensed["count"] == 2  # build_slow_song() always produces exactly 2 chunks
+
+
+def test_phrase_boundary_rest_duration_is_deterministic_given_a_seed():
+    def dispensed_gap_at_second_chunk():
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+        sax_events = sorted([e for e in timeline if e.voice_id == "sax"], key=lambda e: e.start_beat)
+        second_chunk_start = 4 * BEATS_PER_BAR
+        first_second_chunk_event = [e for e in sax_events if e.start_beat >= second_chunk_start][0]
+        return first_second_chunk_event.start_beat - second_chunk_start
+
+    assert dispensed_gap_at_second_chunk() == dispensed_gap_at_second_chunk()
 
 
 def test_sax_events_never_cross_their_own_bar_boundary():

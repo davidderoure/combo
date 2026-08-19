@@ -180,6 +180,30 @@ different, repeat-then-develop device, not attempted here; extending this to
 `markov_sax_generator` (Phase 35, deliberately kept minimal/comparison-
 focused).
 
+A deliberate rest between chunks (Phase 39, DESIGN.md §12): prompted directly by
+David's own diagnosis of a listening test — not raw gap count but "speaking in
+sentences," distinct phrases a listener can tell apart, which "came for free" with
+Wolfson's lick-trading/self-play and is "one of the challenges of moving into the
+combo architecture." Checked the actual mechanism, not assumed: Wolfson's self-play
+generates one phrase per call, plays it to completion, THEN re-injects it as the
+next call's seed after a short gap — silence between phrases is a structural side
+effect of that turn-taking loop. combo's plan-chunk architecture has no equivalent:
+`_inject_rests` (`ensemble/wolfson/phrase_generator.py`) is the only source of any
+rest at all, and its own bell-curve probability (`4·x·(1−x)·REST_MAX_PROBABILITY`)
+is mathematically zero at both ends of a `generate()` call — a chunk boundary is
+exactly where a rest is least likely to occur on its own. Fixed in combo-authored
+code only (the ported model is untouched): right after a new chunk's winning
+candidate is selected, a rest is prepended to it — skipped before the very first
+chunk of the performance (nothing to separate it from) — reusing `_inject_rests`'
+own rest-sentinel shape (`PHRASE_BOUNDARY_REST_BEATS`, duplicating its private
+`_REST_DURATIONS` values rather than importing them, same precedent as
+`ensemble/critic.py`'s `MIN_BREATH_BEATS`) so `_split_phrase_into_bars` (already
+`REST_PITCH`-aware) needs no changes. Costs a small, honest slice of the chunk's
+own beat budget, matching how `_inject_rests`' own mid-phrase rests already work —
+not a double standard. David separately named a related but deliberately deferred
+idea while discussing this: real players often anticipate an imminent chord change
+rather than merely continue across it — not attempted here.
+
 Explicitly deferred (see DESIGN.md §12 for the full list): all ~10 of
 PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, register
 contrast, etc. — motif_targets/motif_strength are now wired, via memory) are left
@@ -192,6 +216,7 @@ like it is in chord_tone_generator/comping_generator — Wolfson's trained pitch
 vocabulary is hard-clipped to MIDI 44-93 by the model itself.
 """
 
+import random
 from collections import Counter, deque
 from typing import List, Optional, Tuple
 
@@ -218,6 +243,11 @@ MODAL_STRENGTH_WHEN_ACTIVE = 1.0  # placeholder, same status as above -- full
                                     # empirically to have a real effect (20 real
                                     # one-shot generations: P4/P5 leaps go from
                                     # 10.0% of intervals at 0.0 to 26.0% at 1.0).
+PHRASE_BOUNDARY_REST_BEATS = (0.5, 1.0)  # same rest-duration vocabulary as
+                                            # phrase_generator.py's own (private,
+                                            # ported) _REST_DURATIONS -- duplicated,
+                                            # not imported, same precedent as
+                                            # critic.py's MIN_BREATH_BEATS (Phase 39).
 
 # combo's 17 canonical qualities (song/chord.py's _QUALITY_ALIASES values) mapped
 # onto Wolfson's 4 harmonic-function classes. Root translation is the identity
@@ -555,8 +585,6 @@ def sax_generator(
     too, not purely to target_voice_id -- not a bug, the natural way to
     observe this mechanism's effect, but worth knowing going in."""
     if seed is not None:
-        import random
-
         import torch
 
         torch.manual_seed(seed)
@@ -571,6 +599,11 @@ def sax_generator(
     own_pitch_weighted = {"sum": 0.0, "beats": 0.0}  # Phase 36 -- duration-weighted pitch
                                                         # accumulator, fed into register_balance
                                                         # as prior_mean_beats
+    chunks_dispensed = {"count": 0}  # Phase 39 -- how many plan chunks this voice has
+                                       # built so far THIS performance; gates the
+                                       # phrase-boundary rest below (no rest before
+                                       # the very first chunk -- nothing to separate
+                                       # it from)
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
         if director_signal.gesture is not None and director_signal.gesture.name == "toggle_singability":
@@ -679,6 +712,29 @@ def sax_generator(
             generate.motif_adherence_log.append(best_key[1])
             generate.winning_score_log.append(best_score)
 
+            # Phase 39: a deliberate rest between chunks -- "speaking in
+            # sentences". Wolfson's own self-play generates one phrase per
+            # call, plays it out, THEN feeds it back after a short gap;
+            # silence between phrases falls out of that turn-taking loop for
+            # free. combo's plan-chunk architecture has no structural
+            # equivalent -- _inject_rests (phrase_generator.py) is the only
+            # source of any rest, and its own bell-curve probability is
+            # mathematically zero at both ends of a generate() call, so a
+            # chunk boundary is exactly where a rest is LEAST likely to occur
+            # on its own. Reuses _inject_rests' own rest-sentinel shape so
+            # _split_phrase_into_bars (already REST_PITCH-aware) needs no
+            # changes. Skipped before the very first chunk of the performance
+            # -- there's no prior phrase to separate this one from.
+            if chunks_dispensed["count"] > 0:
+                notes = [
+                    {
+                        "pitch": REST_PITCH,
+                        "duration_beats": random.choice(PHRASE_BOUNDARY_REST_BEATS),
+                        "velocity_scale": 1.0,
+                    }
+                ] + notes
+            chunks_dispensed["count"] += 1
+
             winner_real_in_register = [
                 n for n in notes if n["pitch"] != REST_PITCH and register[0] <= n["pitch"] <= register[1]
             ]
@@ -713,4 +769,5 @@ def sax_generator(
     generate.own_pitch_range = own_pitch_range  # exposed for testing (Phase 32) -- same "expose the
                                                   # mutable dict directly" convention as dissonance_mode
     generate.own_pitch_weighted = own_pitch_weighted  # exposed for testing (Phase 36) -- same convention
+    generate.chunks_dispensed = chunks_dispensed  # exposed for testing (Phase 39) -- same convention
     return generate

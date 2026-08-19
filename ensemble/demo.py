@@ -456,6 +456,34 @@ def demo_sax_wolfson(chart_path: Path) -> None:
         print(f"    chunk {i}: call_response_relatedness off={off_score.call_response_relatedness:.3f} "
               f"on={on_score.call_response_relatedness:.3f}")
 
+    print("\n  A deliberate rest between chunks (Phase 39) -- \"speaking in")
+    print("  sentences\": Wolfson's own self-play generates one phrase, plays it")
+    print("  out, THEN feeds it back -- silence between phrases falls out of that")
+    print("  turn-taking loop for free. combo has no structural equivalent, so a")
+    print("  rest is now deliberately inserted at each chunk boundary (never")
+    print("  before the very first chunk). Shown here as the real gap between")
+    print("  the first chunk's last dispensed sax event and the second chunk's")
+    print("  first:\n")
+
+    boundary_bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    boundary_sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=9)
+    boundary_sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=boundary_sax_gen)
+    boundary_timeline = Session(song=slow_song, voices=[boundary_bass, boundary_sax]).generate(mode=MACHINE_SPEED)
+
+    boundary_events = sorted([e for e in boundary_timeline if e.voice_id == "sax"], key=lambda e: e.start_beat)
+    second_chunk_start = 4 * BEATS_PER_BAR  # DEFAULT_PLAN_BARS
+    first_chunk_events = [e for e in boundary_events if e.start_beat < second_chunk_start]
+    second_chunk_events = [e for e in boundary_events if e.start_beat >= second_chunk_start]
+    last_of_first = first_chunk_events[-1]
+    first_of_second = second_chunk_events[0]
+    total_gap = first_of_second.start_beat - (last_of_first.start_beat + last_of_first.duration_beats)
+    past_boundary = first_of_second.start_beat - second_chunk_start
+    print(f"    first chunk's last note ends at beat {last_of_first.start_beat + last_of_first.duration_beats:.2f}")
+    print(f"    second chunk boundary is beat {second_chunk_start:.2f}")
+    print(f"    second chunk's first note starts at beat {first_of_second.start_beat:.2f}")
+    print(f"    total gap: {total_gap:.2f} beats (this chunk's own trailing space "
+          f"+ {past_boundary:.2f} beats from the new deliberate boundary rest)")
+
 
 @contextmanager
 def _counting_phrase_generator_calls():

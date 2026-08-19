@@ -861,6 +861,34 @@ evolving it) — a different, repeat-then-develop device, not attempted here;
 extending this to `markov_sax_generator` (Phase 35, deliberately kept
 comparison-focused).
 
+**A deliberate rest between chunks — "speaking in sentences" (Phase 39).**
+Following Phase 38's stuck-note fix, David's own diagnosis of what he was
+really reacting to: not raw gap count but "speaking in sentences" — distinct
+phrases a listener can tell apart, which "came for free" with Wolfson's
+lick-trading/self-play and is "one of the challenges of moving into the combo
+architecture." Traced the actual mechanism, not assumed: Wolfson's self-play
+generates one phrase per call, plays it to completion, *then* re-injects it as
+the next call's seed after a short gap — silence between phrases is a
+structural side effect of that turn-taking loop. combo's plan-chunk
+architecture has no equivalent: `_inject_rests` (`ensemble/wolfson/
+phrase_generator.py`) is the only source of any rest, and its own bell-curve
+probability (`4·x·(1−x)·REST_MAX_PROBABILITY`) is mathematically *zero* at
+both ends of a `generate()` call — a chunk boundary is exactly where a rest is
+least likely to occur on its own. Fixed entirely in combo-authored code: right
+after a new chunk's winning candidate is selected, a rest is prepended to
+it — skipped before the very first chunk of the performance (nothing to
+separate it from) — reusing `_inject_rests`' own rest-sentinel shape
+(`PHRASE_BOUNDARY_REST_BEATS = (0.5, 1.0)`, duplicating its private
+`_REST_DURATIONS` values rather than importing them, same precedent as
+`ensemble/critic.py`'s `MIN_BREATH_BEATS`) so `_split_phrase_into_bars`
+(already `REST_PITCH`-aware) needs no changes. Costs a small, honest slice of
+the chunk's own beat budget, matching how `_inject_rests`' own mid-phrase
+rests already work — not a double standard. David separately named a related
+but deliberately deferred idea while discussing this: real players often
+anticipate an imminent chord change rather than merely continue across it —
+"we probably need to code that in, but let's test more first" — not attempted
+in this phase.
+
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a

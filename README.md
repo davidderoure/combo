@@ -905,6 +905,26 @@ active — moves from 0.333 to 0.600 on the same chunk, off vs. on.
 Deferred: Wolfson's separate riff/repeat mechanism (replaying the last phrase
 verbatim before evolving it) — a different device, not attempted here.
 
+**A deliberate rest between chunks — "speaking in sentences"** (Phase 39).
+Following Phase 38's stuck-note fix, David's own diagnosis of what he was
+really reacting to: not raw gap count but "speaking in sentences" — distinct
+phrases a listener can tell apart, which "came for free" with Wolfson's
+lick-trading/self-play and is "one of the challenges of moving into the combo
+architecture." Traced the actual mechanism: Wolfson's self-play generates one
+phrase per call, plays it to completion, then re-injects it as the next
+call's seed after a short gap — silence between phrases falls out of that
+turn-taking loop. combo's plan-chunk architecture has no equivalent —
+`_inject_rests`' own bell-curve rest probability is mathematically zero at
+both ends of a `generate()` call, exactly where a rest is needed most. Fixed
+entirely in combo-authored code: a rest is now prepended to each new chunk's
+winning candidate — skipped before the very first chunk — reusing
+`_inject_rests`' own rest-sentinel shape (`PHRASE_BOUNDARY_REST_BEATS = (0.5,
+1.0)`, duplicated rather than imported, same precedent as `MIN_BREATH_BEATS`)
+so `_split_phrase_into_bars` needs no changes. Deferred: chord-change
+anticipation (David's own explicit deferral — real players anticipate an
+imminent change rather than merely continue across it, "we probably need to
+code that in, but let's test more first").
+
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
 in Phase 5 (every phase since had repeated some version of "a director-emitted
