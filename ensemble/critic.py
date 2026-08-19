@@ -51,7 +51,7 @@ musically validated.
 import math
 from collections import Counter
 from dataclasses import dataclass
-from typing import Tuple
+from typing import Optional, Tuple
 
 from .corpus_motifs import CorpusMotifs
 from .rhythm_motifs import extract_duration_motifs
@@ -567,7 +567,7 @@ def phrasing(notes: list) -> float:
     return math.exp(-0.5 * (dist / BREATH_FRACTION_WIDTH) ** 2)
 
 
-def register_usage(notes: list, register: Tuple[int, int]) -> float:
+def register_usage(notes: list, register: Tuple[int, int], prior_range: Optional[Tuple[int, int]] = None) -> float:
     """Fraction of `register`'s width spanned by this chunk's IN-REGISTER real
     notes -- prompted directly by a listening-test observation ("not much range
     of the instrument is being used"). Deliberately measured over in-register
@@ -592,15 +592,38 @@ def register_usage(notes: list, register: Tuple[int, int]) -> float:
     narrow register already caps how much span is possible, so this metric
     doesn't need to know which mode is active.
 
-    Fewer than 2 in-register real notes -> 0.0 (nothing to span)."""
+    prior_range (Phase 32), if given: the (low, high) pitch bounds already
+    explored by this SAME voice earlier in this performance (ensemble/sax.py
+    tracks this across chunk-builds). Widens what the candidate is judged
+    against from "just this chunk's own notes" to "everything this voice has
+    played so far, including this candidate" -- checked directly against
+    Phase 30's own finding that per-chunk-only measurement scored WJD's real,
+    wide natural register (44-93) LOWER than combo's narrower SAX_REGISTER
+    (55-79): backwards, because a short excerpt can't reflect a whole solo's
+    real range regardless of how far the player actually goes. A candidate
+    that only replays already-explored territory can't raise the combined
+    span above prior_range's own (it's already counted); only a genuine
+    excursion beyond what's already been played does -- directly rewarding
+    "occasional excursions", not just "wide notes within one candidate".
+    Default None reproduces exactly today's per-chunk-only behaviour.
+
+    Fewer than 2 in-register real notes, and no prior_range -> 0.0 (nothing to
+    span). With a real prior_range, even zero in-register candidate notes
+    still reports prior_range's own span -- "this candidate contributed
+    nothing new" is a real, honest answer, not forced to 0.0."""
     low, high = register
     width = high - low
     if width <= 0:
         return 0.0
     in_register = [n["pitch"] for n in _real_notes(notes) if low <= n["pitch"] <= high]
-    if len(in_register) < 2:
-        return 0.0
-    return (max(in_register) - min(in_register)) / width
+    if prior_range is None:
+        if len(in_register) < 2:
+            return 0.0
+        return (max(in_register) - min(in_register)) / width
+    p_low, p_high = prior_range
+    combined_low = min([p_low] + in_register)
+    combined_high = max([p_high] + in_register)
+    return (combined_high - combined_low) / width
 
 
 @dataclass(frozen=True)
@@ -618,6 +641,7 @@ class MusicalityScore:
 def musicality_score(
     notes: list, chord_idx: int, seed_phrase: list, register: Tuple[int, int], weights: dict = None,
     extra_tolerated: frozenset = frozenset(), credit_resolved_tension: bool = False, modal: bool = False,
+    prior_range: Optional[Tuple[int, int]] = None,
 ) -> MusicalityScore:
     """weights, if given, overrides DEFAULT_WEIGHTS for the overall combination
     only -- every sub-score is still computed and reported regardless (a metric
@@ -637,7 +661,9 @@ def musicality_score(
     this positive quality signal in agreement about what counts as legitimate.
     modal (Phase 27): passed straight through to contour_smoothness, matching
     whichever modal_strength was used for this same candidate's generation.
-    All three default to today's pre-Phase-27 behaviour."""
+    prior_range (Phase 32): passed straight through to register_usage -- see
+    its own docstring. All four default to their respective pre-existing
+    behaviour."""
     weights = weights if weights is not None else DEFAULT_WEIGHTS
     scores = {
         "tonal_conformity": tonal_conformity(notes, chord_idx, extra_tolerated, credit_resolved_tension),
@@ -646,7 +672,7 @@ def musicality_score(
         "call_response_relatedness": call_response_relatedness(seed_phrase, notes),
         "singability": singability(notes),
         "phrasing": phrasing(notes),
-        "register_usage": register_usage(notes, register),
+        "register_usage": register_usage(notes, register, prior_range),
     }
     overall = sum(scores[key] * weights.get(key, 0.0) for key in scores)
     return MusicalityScore(overall=overall, **scores)

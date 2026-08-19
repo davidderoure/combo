@@ -373,6 +373,27 @@ parameter (no sensible default), rippling through all 14 existing call sites —
 expected, mechanical fallout, not a regression. `DEFAULT_WEIGHTS` rebalanced to
 seven keys summing to 1.0.
 
+**`register_usage` now rewards excursions across a whole performance, not
+just one chunk's own span** (Phase 32) — the first concrete fix from Phase
+30's critic baseline. Root cause was structural: a 5-8 note chunk can't
+reflect a whole solo's real range regardless of how far the player actually
+goes — exactly why WJD's own wide natural range scored *lower* than combo's
+narrower `SAX_REGISTER` in Phase 30. New optional `prior_range` parameter —
+this voice's own already-explored pitch bounds so far this performance,
+tracked as `sax_generator` closure state (`own_pitch_range`, same convention
+as `critic_weights`) — widens what a candidate is judged against to
+`prior_range ∪ candidate's own notes`. The incentive shape falls out for
+free: replaying already-covered ground can't raise the score above
+`prior_range`'s own span; only a genuine excursion beyond it does.
+`prior_range=None` (every pre-existing call) reproduces the exact old
+formula. Real, measured via `critic_baseline.py --self-test-only`: combo's
+own `register_usage` average rose from 0.348 to **0.903**, `overall` from
+0.632 to 0.744 — large, not marginal. Named limitation: `prior_range` only
+grows within a performance, so once the full register's been explored,
+later chunks can't score higher here regardless of what they do — a
+decaying "recent range" window is a possible future refinement, not
+attempted.
+
 **Recall is also chord-quality-aware, not just pooled globally** (Phase 25).
 `RehearsalMemory.store`/`recall_motifs` take an optional `chord_quality`
 (Wolfson's 4-class major/dominant/minor/diminished system), computed once per
@@ -453,7 +474,11 @@ solos); `tonal_conformity` (0.71 vs 0.87) is the concerning, unresolved one
 suggests WJD's chord classification may have real accuracy limits beyond
 the already-fixed `parse_chord` bug, never validated against ground truth;
 `register_usage` is confounded by short per-chunk spans regardless of a
-whole solo's real range. A diagnostic result, not yet acted on.
+whole solo's real range. A diagnostic result. Phase 32, below, fixes this
+specifically for combo's own *generation-time* selection (`sax_generator`
+now judges a candidate against its own explored range so far, not just one
+chunk) — `critic_baseline.py`'s retrospective WJD-corpus scoring is a
+separate call site and still measures per-chunk only, not revisited here.
 
 **Validating chord extraction against an independent signal** (Phase 31,
 `bass_chord_check.py`) narrowed the `tonal_conformity` question without

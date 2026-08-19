@@ -436,6 +436,18 @@ def sax_generator(
     is a genuinely different, useful question. Defaults to None, reproducing
     every existing caller's behaviour exactly — no CorpusMotifs, no change.
 
+    This closure also tracks its own real pitch range explored so far this
+    performance (Phase 32) — updated after every chunk's winner is chosen,
+    fed into the NEXT chunk's musicality_score as register_usage's
+    prior_range (see ensemble/critic.py's own docstring). Fixes a real,
+    checked-not-assumed problem: register_usage previously only ever saw one
+    chunk's own few notes, and Phase 30's critic baseline found that scored
+    WJD's real, wide natural range LOWER than combo's narrower SAX_REGISTER
+    — backwards, since a short excerpt can't reflect a whole solo's range.
+    Widening what a candidate is judged against (this run's own explored
+    range, not just this chunk) rewards a genuine excursion beyond what's
+    already been played, not just a wide span within one candidate.
+
     motif_recall_candidates, if given, overrides n_candidates specifically for
     a chunk that has a non-empty motif_targets — more search shots make it far
     more likely at least one candidate actually lands the motif, justified by
@@ -484,6 +496,9 @@ def sax_generator(
     plan: deque = deque()
     critic_weights = dict(DEFAULT_WEIGHTS)
     dissonance_mode = {"enabled": True}
+    own_pitch_range = {"low": None, "high": None}  # Phase 32 -- this voice's own real pitch
+                                                      # bounds explored so far THIS performance,
+                                                      # fed into register_usage as prior_range
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
         if director_signal.gesture is not None and director_signal.gesture.name == "toggle_singability":
@@ -516,6 +531,14 @@ def sax_generator(
 
             candidates_this_chunk = (motif_recall_candidates or n_candidates) if motif_targets else n_candidates
 
+            # Phase 32: this voice's own real pitch range explored so far this
+            # performance, fed into register_usage as prior_range -- None
+            # (the pre-Phase-32 behaviour) until the first chunk's winner is
+            # chosen below.
+            prior_range = (
+                (own_pitch_range["low"], own_pitch_range["high"]) if own_pitch_range["low"] is not None else None
+            )
+
             best_notes = None
             best_score = None
             best_key = None
@@ -534,7 +557,7 @@ def sax_generator(
                 candidate_score = musicality_score(
                     candidate_notes, chord_idx, seed_phrase, register, weights=critic_weights,
                     extra_tolerated=functional_scale, credit_resolved_tension=credit_resolved_tension,
-                    modal=song.modal,
+                    modal=song.modal, prior_range=prior_range,
                 )
                 candidate_scores.append(candidate_score.overall)
                 # (-dissonance, adherence, corpus_score, overall) lexicographic
@@ -578,6 +601,14 @@ def sax_generator(
             generate.motif_adherence_log.append(best_key[1])
             generate.winning_score_log.append(best_score)
 
+            winner_real_pitches = [
+                n["pitch"] for n in notes if n["pitch"] != REST_PITCH and register[0] <= n["pitch"] <= register[1]
+            ]
+            if winner_real_pitches:
+                lo, hi = min(winner_real_pitches), max(winner_real_pitches)
+                own_pitch_range["low"] = lo if own_pitch_range["low"] is None else min(own_pitch_range["low"], lo)
+                own_pitch_range["high"] = hi if own_pitch_range["high"] is None else max(own_pitch_range["high"], hi)
+
             if memory is not None:
                 memory.store(notes, score=best_score.overall, chord_quality=chord_quality)
             plan.extend(_split_phrase_into_bars(notes, bar_start, span_bars, register))
@@ -598,4 +629,6 @@ def sax_generator(
                                        # motif_adherence_log/dissonance_log (one sub-score each) --
                                        # this is the complete score of what was actually dispensed,
                                        # for critic_baseline.py's real-vs-WJD comparison.
+    generate.own_pitch_range = own_pitch_range  # exposed for testing (Phase 32) -- same "expose the
+                                                  # mutable dict directly" convention as dissonance_mode
     return generate

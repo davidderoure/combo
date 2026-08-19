@@ -757,6 +757,47 @@ def test_register_usage_zero_width_register_is_zero():
     assert register_usage(notes_from_pitches([60, 62]), (60, 60)) == 0.0
 
 
+def test_register_usage_prior_range_none_reproduces_per_chunk_only_behaviour():
+    notes = notes_from_pitches([60, 65, 72])
+    assert register_usage(notes, REGISTER, prior_range=None) == register_usage(notes, REGISTER)
+
+
+def test_register_usage_prior_range_widens_a_narrow_candidates_score():
+    # candidate span alone: 62-60=2/24 (narrow); prior_range=(55,67) -- 12/24=0.5
+    # -- both notes fall INSIDE prior_range, so nothing new is added: the
+    # combined span is exactly prior_range's own, not the candidate's tiny one.
+    notes = notes_from_pitches([60, 62])
+    assert register_usage(notes, REGISTER, prior_range=(55, 67)) == pytest.approx(0.5)
+    assert register_usage(notes, REGISTER) == pytest.approx(2 / 24)  # the old, narrow, per-chunk-only score
+
+
+def test_register_usage_prior_range_a_genuine_excursion_above_raises_the_score():
+    # prior_range=(55,67) span 0.5; candidate pushes to 70/72, ABOVE prior's high.
+    notes = notes_from_pitches([70, 72])
+    assert register_usage(notes, REGISTER, prior_range=(55, 67)) == pytest.approx((72 - 55) / 24)
+
+
+def test_register_usage_prior_range_a_genuine_excursion_below_raises_the_score():
+    # prior_range=(60,79) span (79-60)/24; candidate pushes to 56/58, BELOW prior's low.
+    notes = notes_from_pitches([56, 58])
+    assert register_usage(notes, REGISTER, prior_range=(60, 79)) == pytest.approx((79 - 56) / 24)
+
+
+def test_register_usage_prior_range_no_candidate_notes_reports_priors_own_span():
+    # A candidate that contributes nothing new (empty, or entirely out of
+    # register) still gets an honest answer -- prior_range's own span, not
+    # forced to 0.0 the way a bare candidate-only call would be.
+    assert register_usage([], REGISTER, prior_range=(55, 67)) == pytest.approx(0.5)
+    out_of_register = notes_from_pitches([40])  # below REGISTER entirely
+    assert register_usage(out_of_register, REGISTER, prior_range=(55, 67)) == pytest.approx(0.5)
+
+
+def test_musicality_score_threads_prior_range_into_register_usage():
+    notes = notes_from_pitches([60, 62])
+    score = musicality_score(notes, C_MAJOR, [], REGISTER, prior_range=(55, 67))
+    assert score.register_usage == register_usage(notes, REGISTER, prior_range=(55, 67))
+
+
 # ---------------------------------------------------------------------------
 # musicality_score combination
 # ---------------------------------------------------------------------------

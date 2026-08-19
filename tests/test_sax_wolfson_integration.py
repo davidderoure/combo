@@ -48,6 +48,16 @@ def load_blues():
     return parse_chart((CHARTS_DIR / "blues_in_f.chart").read_text())
 
 
+def _dispensed_pitch_range(timeline, voice_id: str, until_beat: float):
+    """Phase 32: the real (low, high) pitch bounds a voice actually dispensed
+    strictly before until_beat -- used to recompute the real prior_range a
+    later chunk's candidates were scored against, the same value
+    ensemble/sax.py's own_pitch_range tracks internally. None if nothing was
+    dispensed yet (mirrors register_usage's own prior_range=None case)."""
+    pitches = [e.pitch for e in timeline if e.voice_id == voice_id and e.start_beat < until_beat]
+    return (min(pitches), max(pitches)) if pitches else None
+
+
 def make_session(seed: int, director: Director = None) -> Session:
     bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
     sax = Voice(
@@ -308,16 +318,17 @@ def test_search_picks_the_actual_highest_scoring_candidate():
     # build_slow_song()'s 2 chunks (bars 4-7, DEFAULT_PLAN_BARS=4) -- comparing
     # against candidates[:5] (the first chunk) would silently compare the wrong
     # chunk's data. Use the last 5 calls to match what's actually still exposed.
+    second_chunk_start = 4 * BEATS_PER_BAR  # DEFAULT_PLAN_BARS=4 -> chunk 2 starts at bar 4
+    prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
     last_chunk = candidates[-5:]
     recomputed_scores = [
-        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range).overall
         for seed_phrase, kwargs, notes in last_chunk
     ]
     assert recomputed_scores == sax_gen.last_candidate_scores
 
     winner_notes = last_chunk[recomputed_scores.index(max(recomputed_scores))][2]
     winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
-    second_chunk_start = 4 * BEATS_PER_BAR  # DEFAULT_PLAN_BARS=4 -> chunk 2 starts at bar 4
     dispensed_pitches = sorted(
         e.pitch for e in timeline
         if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
@@ -367,8 +378,13 @@ def test_phrasing_varies_across_real_candidates_and_reaches_selection():
     finally:
         wolfson_phrase_generator.PhraseGenerator.generate = original
 
+    second_chunk_start = 4 * BEATS_PER_BAR
+    prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
     last_chunk = candidates[-8:]
-    scored = [musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER) for seed_phrase, kwargs, notes in last_chunk]
+    scored = [
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range)
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
 
     phrasing_values = [s.phrasing for s in scored]
     assert len(set(round(p, 6) for p in phrasing_values)) > 1  # genuine variance, not degenerate
@@ -419,8 +435,13 @@ def test_register_usage_varies_across_real_candidates_and_reaches_selection():
     finally:
         wolfson_phrase_generator.PhraseGenerator.generate = original
 
+    second_chunk_start = 4 * BEATS_PER_BAR
+    prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
     last_chunk = candidates[-8:]
-    scored = [musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER) for seed_phrase, kwargs, notes in last_chunk]
+    scored = [
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range)
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
 
     register_usage_values = [s.register_usage for s in scored]
     assert len(set(round(r, 6) for r in register_usage_values)) > 1  # genuine variance, not degenerate
@@ -428,7 +449,6 @@ def test_register_usage_varies_across_real_candidates_and_reaches_selection():
     recomputed_overall = [s.overall for s in scored]
     assert recomputed_overall == sax_gen.last_candidate_scores
 
-    second_chunk_start = 4 * BEATS_PER_BAR
     functional_scale = _functional_tonic_scale(song, second_chunk_start)
     keys = [
         (-dissonance(notes, kwargs["chord_idx"], extra_tolerated=functional_scale), motif_adherence(notes, []), score.overall)
@@ -572,11 +592,13 @@ def test_search_with_a_motif_target_prefers_higher_adherence_over_higher_overall
     motif_targets = last_chunk[0][1]["motif_targets"]
     assert motif_targets != []  # the scenario this test is actually about
 
+    second_chunk_start = 4 * BEATS_PER_BAR
+    prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
     recomputed = [
         (
             -dissonance(notes, kwargs["chord_idx"]),
             motif_adherence(notes, motif_targets),
-            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall,
+            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range).overall,
         )
         for seed_phrase, kwargs, notes in last_chunk
     ]
@@ -585,7 +607,6 @@ def test_search_with_a_motif_target_prefers_higher_adherence_over_higher_overall
     best_key = max(recomputed)
     winner_notes = last_chunk[recomputed.index(best_key)][2]
     winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
-    second_chunk_start = 4 * BEATS_PER_BAR
     dispensed_pitches = sorted(
         e.pitch for e in timeline
         if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
@@ -734,15 +755,19 @@ def test_dissonance_mode_disabled_reverts_to_overall_only_selection():
     assert len(candidates) == 16  # 2 chunks * 8 candidates
     last_chunk = candidates[-8:]
 
+    second_chunk_start = 4 * BEATS_PER_BAR
+    prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
     overall_only = [
-        (motif_adherence(notes, []), musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall)
+        (
+            motif_adherence(notes, []),
+            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range).overall,
+        )
         for seed_phrase, kwargs, notes in last_chunk
     ]
     best_overall_only = max(overall_only)
     winner_notes = last_chunk[overall_only.index(best_overall_only)][2]
     winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
 
-    second_chunk_start = 4 * BEATS_PER_BAR
     dispensed_pitches = sorted(
         e.pitch for e in timeline
         if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
@@ -1336,3 +1361,50 @@ def test_winning_score_log_matches_the_real_selected_winner():
     from ensemble.critic import dissonance
     recomputed_dissonances = [dissonance(notes, f7_idx) for _sp, _kw, notes in first_chunk]
     assert sax_gen.dissonance_log[0] == min(recomputed_dissonances)
+
+
+def test_prior_range_reaches_real_selection_on_the_second_chunk():
+    """Phase 32: build_slow_song() always produces exactly 2 chunks
+    (DEFAULT_PLAN_BARS=4 over an 8-bar hold) -- chunk 1 has no prior range
+    yet (own_pitch_range starts empty), chunk 2 should be scored with
+    prior_range equal to chunk 1's own real dispensed pitch bounds. Spies on
+    ensemble.sax's own bound name for musicality_score (NOT
+    ensemble.critic.musicality_score -- sax.py did `from .critic import
+    musicality_score`, its own local reference), the same technique
+    rehearsal_ab_test.py already uses, delegating to the real implementation
+    throughout."""
+    import ensemble.sax as sax_module
+
+    original_score = sax_module.musicality_score
+    calls = []  # (register, prior_range) per musicality_score call
+
+    def score_wrapper(notes, chord_idx, seed_phrase, register, **kwargs):
+        calls.append((register, kwargs.get("prior_range")))
+        return original_score(notes, chord_idx, seed_phrase, register, **kwargs)
+
+    sax_module.musicality_score = score_wrapper
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=3, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        sax_module.musicality_score = original_score
+
+    assert len(calls) == 6  # 3 candidates x 2 chunks
+
+    first_chunk_calls = calls[:3]
+    second_chunk_calls = calls[3:]
+    assert all(prior_range is None for _reg, prior_range in first_chunk_calls)
+
+    second_chunk_start = 4 * BEATS_PER_BAR
+    chunk1_pitches = [
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and 0.0 <= e.start_beat < second_chunk_start
+    ]
+    assert chunk1_pitches  # a real, non-empty dispensed chunk
+    expected_prior_range = (min(chunk1_pitches), max(chunk1_pitches))
+    assert all(prior_range == expected_prior_range for _reg, prior_range in second_chunk_calls)
+
+    all_sax_pitches = [e.pitch for e in timeline if e.voice_id == "sax"]
+    assert sax_gen.own_pitch_range == {"low": min(all_sax_pitches), "high": max(all_sax_pitches)}

@@ -136,6 +136,33 @@ rippling through every existing call site (14 total, across `ensemble/sax.py`
 and both critic/integration test files) — expected, mechanical fallout, not a
 regression. `DEFAULT_WEIGHTS` rebalanced to seven keys.
 
+**`register_usage` now rewards excursions across a whole performance, not
+just span within one chunk (Phase 32)** — the first concrete fix following
+Phase 30's critic baseline. Root cause was structural: the metric only ever
+saw one candidate's own 5-8 notes, and a short excerpt can't reflect a whole
+solo's real range no matter how far the player goes elsewhere — exactly why
+WJD's own wide natural range scored *lower* than combo's narrower
+`SAX_REGISTER` in Phase 30. Fix: `register_usage` gains an optional
+`prior_range: Optional[Tuple[int, int]]` — the (low, high) bounds this same
+voice has already explored earlier in the performance — and judges the
+candidate against `prior_range ∪ candidate's own notes`, not the candidate
+alone. This has the right incentive shape for free: replaying
+already-covered territory can't raise the score above `prior_range`'s own
+span (it's already counted); only a genuine excursion beyond what's already
+been played does — a direct, mechanical model of "occasional excursions are
+good," not just "reward wide spans." `ensemble/sax.py`'s `sax_generator`
+tracks `own_pitch_range` as closure state across chunk-builds (same
+convention as `critic_weights`/`dissonance_mode`), updated after each
+chunk's winner is chosen. `prior_range=None` (every pre-existing caller)
+reproduces the exact old per-chunk-only formula. Real, measured effect via
+`critic_baseline.py --self-test-only`: combo's own `register_usage` average
+rose from 0.348 to **0.903**, and `overall` from 0.632 to 0.744 — a large,
+real shift, not a marginal tweak. A named, accepted limitation: `prior_range`
+only ever grows within one performance, so once the full register has
+genuinely been explored, later chunks can't score higher on this axis no
+matter what they do — a decaying/windowed "recent range" instead of the
+whole performance so far is a possible future refinement, not attempted here.
+
 Recall is also **chord-quality-aware, not just pooled globally** (Phase 25):
 `RehearsalMemory.store`/`recall_motifs` take an optional `chord_quality`
 (Wolfson's 4-class major/dominant/minor/diminished system), computed once per
