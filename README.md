@@ -394,6 +394,21 @@ later chunks can't score higher here regardless of what they do — a
 decaying "recent range" window is a possible future refinement, not
 attempted.
 
+**`repetition`'s weight is negative now, not just retuned** (Phase 33). The
+literal reading of "reweight using the real WJD number" — just increase the
+weight — would have backfired: `repetition()` returns `1.0` when a chunk
+*shows* a repeated pattern, and the weight blended it *positively* into
+`overall` (Phase 12's original coherence framing). Since combo already
+shows it far more than real solos (64.8% of chunks vs. WJD's 29.4%),
+increasing that weight would push selection toward *more* repetition. Fix:
+`repetition()` itself untouched; only `DEFAULT_WEIGHTS["repetition"]`
+flipped sign, `0.1 → -0.1` — the smallest change that corrects the
+direction, not yet retuned to a new magnitude. `motif_adherence` (echoing a
+specifically recalled motif) is a separate signal, unaffected. Real,
+measured: combo's `repetition` rate dropped from 62.3% to **41.0%** — a
+real move toward WJD's 29.4%, not all the way there; whether the magnitude
+needs further tuning is open, answerable by rerunning `critic_baseline.py`.
+
 **Recall is also chord-quality-aware, not just pooled globally** (Phase 25).
 `RehearsalMemory.store`/`recall_motifs` take an optional `chord_quality`
 (Wolfson's 4-class major/dominant/minor/diminished system), computed once per

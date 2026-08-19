@@ -820,6 +820,30 @@ def test_musicality_score_overall_is_the_documented_weighted_sum():
     assert score.overall == pytest.approx(expected_overall)
 
 
+def test_repetitions_negative_weight_makes_a_repetitive_phrase_score_lower():
+    """Phase 33: DEFAULT_WEIGHTS["repetition"] is negative -- a phrase that
+    SHOWS repetition must score LOWER in overall than one that doesn't, not
+    higher (Phase 12's original positive framing, inverted once Phase 30
+    found combo shows repetition far more than real solos do). Isolated via
+    a weights override that zeroes every other metric, so the only thing
+    that can move `overall` here is repetition's own value and sign."""
+    repetition_only_weights = {k: 0.0 for k in DEFAULT_WEIGHTS}
+    repetition_only_weights["repetition"] = DEFAULT_WEIGHTS["repetition"]
+
+    repetitive = notes_from_pitches([60, 62, 64, 60, 62, 64])  # repetition() == 1.0
+    varied = notes_from_pitches([60, 61, 63, 66, 70])  # repetition() == 0.0
+
+    repetitive_score = musicality_score(repetitive, C_MAJOR, [], REGISTER, weights=repetition_only_weights)
+    varied_score = musicality_score(varied, C_MAJOR, [], REGISTER, weights=repetition_only_weights)
+
+    assert repetitive_score.repetition == 1.0
+    assert varied_score.repetition == 0.0
+    assert repetitive_score.overall < varied_score.overall
+    assert DEFAULT_WEIGHTS["repetition"] < 0.0  # the actual polarity this test depends on
+    assert repetitive_score.overall == pytest.approx(DEFAULT_WEIGHTS["repetition"])
+    assert varied_score.overall == pytest.approx(0.0)
+
+
 def test_musicality_score_weights_can_be_overridden_per_call():
     """Phase 13: the per-session/per-gesture configuration point (DESIGN.md §11)
     -- every sub-score is still computed regardless of weights (a metric "turned

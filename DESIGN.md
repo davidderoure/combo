@@ -163,6 +163,34 @@ genuinely been explored, later chunks can't score higher on this axis no
 matter what they do — a decaying/windowed "recent range" instead of the
 whole performance so far is a possible future refinement, not attempted here.
 
+**`repetition`'s weight is negative now, not just retuned (Phase 33).**
+David's own proposal was to reweight `repetition` using the real WJD number
+(29.4% of chunks show repetition) as a calibration target, mirroring how
+`TARGET_BREATH_FRACTION` was set. Checked directly before implementing that
+literally: `repetition()` returns `1.0` when a chunk shows a repeated
+pattern, and `DEFAULT_WEIGHTS["repetition"]` blended it *positively* into
+`overall` — Phase 12's original "motivic restatement as coherence" framing,
+a real technique, but combo already shows it in 64.8% of chunks vs. WJD's
+29.4%, so simply *increasing* the weight (the literal reading of
+"reweighting") would have pushed selection toward even more repetition, the
+wrong direction. A bell-curve target doesn't transfer either — repetition is
+binary per-chunk, and 29%/65% are aggregate rates, not a per-chunk quantity
+a candidate could aim for. The actual fix: `repetition()` itself is
+untouched (still a clear, individually meaningful "shows a pattern" signal);
+only `DEFAULT_WEIGHTS["repetition"]` changed, `0.1 → -0.1` — literally
+negated, the smallest change that corrects the direction, not yet retuned to
+a new magnitude. Doesn't touch `motif_adherence` (Phase 17, a separate,
+standalone signal — echoing a specifically *recalled* motif is unaffected).
+Weights no longer sum to 1.0 (0.8 now) — never a strictly enforced
+invariant. Real, measured via `critic_baseline.py --self-test-only`:
+combo's own `repetition` rate dropped from 62.3% (Phase 32's own baseline,
+immediately before this change) to **41.0%** — a real move toward WJD's
+29.4%, though not all the way there; `overall`'s average dropped too (0.744
+→ 0.648), expected and not a concern, since `overall` was never a bounded
+probability, just a comparison key. Whether `-0.1` needs a larger magnitude
+to close the remaining gap is an open, empirically-answerable question for
+a future rerun, not decided here.
+
 Recall is also **chord-quality-aware, not just pooled globally** (Phase 25):
 `RehearsalMemory.store`/`recall_motifs` take an optional `chord_quality`
 (Wolfson's 4-class major/dominant/minor/diminished system), computed once per

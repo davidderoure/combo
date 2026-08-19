@@ -107,7 +107,21 @@ BREATH_FRACTION_WIDTH = 0.08   # placeholder -- same bell-curve treatment as
 DEFAULT_WEIGHTS = {
     "tonal_conformity": 0.2,
     "contour_smoothness": 0.1,
-    "repetition": 0.1,
+    # NEGATIVE (Phase 33) -- repetition() returns 1.0 when a chunk SHOWS a
+    # repeated pattern; originally blended positively (Phase 12's own
+    # "motivic restatement as coherence" framing, a real, legitimate
+    # technique). Phase 30's critic baseline found combo shows it in 64.8%
+    # of chunks vs. WJD's real 29.4% -- combo already over-relies on it, so
+    # a plain weight INCREASE (the literal reading of "reweight using the
+    # real number") would have pushed selection toward MORE repetition, the
+    # wrong direction. Sign flipped instead, same magnitude as before (not
+    # yet retuned to a new size -- see critic_baseline.py's own real
+    # before/after numbers for whether -0.1 alone was enough). repetition()
+    # itself is untouched -- still a clear, tested, individually meaningful
+    # "does this chunk show a pattern" signal; only its ROLE in the blend
+    # changed. Weights no longer sum to 1.0 (0.8 now) -- never a strictly
+    # enforced invariant, just prior calibration bookkeeping.
+    "repetition": -0.1,
     "call_response_relatedness": 0.1,
     "singability": 0.15,
     "phrasing": 0.15,
