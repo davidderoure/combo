@@ -191,6 +191,46 @@ probability, just a comparison key. Whether `-0.1` needs a larger magnitude
 to close the remaining gap is an open, empirically-answerable question for
 a future rerun, not decided here.
 
+**`repetition` redesigned around autocorrelation of pattern fragments, not
+literal repeats (Phase 34) — a correction to Phase 33, not just a follow-up.**
+David's pushback: repetition isn't uniformly bad — real solos build longer
+structures out of *repeating pattern fragments*, which Phase 33's blanket
+negative weight (reacting to the old binary exact/near-repeat detector)
+conflated with literal, undesirable repetition. His own suggestion:
+autocorrelation of intervals or contours detects recurring shape fragments
+specifically, distinct from randomness. A follow-up design question (mine)
+— should this require *variation* across repeats to rule out a stuck,
+verbatim loop, since a stuck loop autocorrelates at least as strongly as a
+developing restatement — David answered directly: no, go for the
+pattern-fragment reading, don't try to solve "is it stuck" in this same
+metric; other metrics are expected to catch genuinely dull/stuck playing on
+their own, with a dedicated "stuck in a loop" or "dull solo" detector as a
+real, separate, still-deferred future idea if that's not enough.
+`repetition()`'s body is replaced with normalized (Pearson) autocorrelation
+of the phrase's interval sequence AND its numeric-encoded U/D/S contour, at
+lags 1..`AUTOCORRELATION_MAX_LAG` (4, matching `extract_interval_motifs`'
+own longest n-gram) — checking both sequences is deliberate, not redundant:
+contour is a coarser, magnitude-blind reduction that catches "the same
+shape of ups/downs, different-sized steps each time," a genuine
+pattern-fragment case interval-only autocorrelation misses (verified
+directly on a constructed example: contour-only autocorrelation 0.5 vs.
+interval-only 0.284 for the same phrase). Only positive autocorrelation
+counts, clipped to `[0, 1]`. `DEFAULT_WEIGHTS["repetition"]` restored to
+`+0.1` (the original pre-Phase-33 magnitude) — a real value judgment, not a
+numerical-parity claim: David explicitly framed this kind of repetition as
+good on its own terms, not conditioned on matching WJD's rate the way
+`register_usage`'s fix was. Real, measured via `critic_baseline.py` (both
+sides, not just combo — this phase changes what's measured, so the WJD
+baseline needed rechecking too, not just combo's score under an unchanged
+metric): WJD **0.147**, combo **0.297** — combo still shows roughly double
+WJD's rate even under this better-grounded measure, reported honestly
+rather than assumed resolved by the redesign alone. Left as-is per David's
+own reasoning (a value judgment about what's rewarded, not a target to
+match) — worth revisiting if a future listening test suggests otherwise.
+`NEAR_REPEAT_WINDOW`/`NEAR_REPEAT_MAX_DISTANCE` (the old detector's
+constants) are removed, genuinely dead — checked directly, nothing else
+depended on them.
+
 Recall is also **chord-quality-aware, not just pooled globally** (Phase 25):
 `RehearsalMemory.store`/`recall_motifs` take an optional `chord_quality`
 (Wolfson's 4-class major/dominant/minor/diminished system), computed once per

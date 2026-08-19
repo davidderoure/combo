@@ -41,7 +41,7 @@ Grounded in two real sources, not first-principles guessing:
 Every function below is a pure, deterministic function over already-generated
 data -- no model inference anywhere in this file, unlike everything else that
 touches PhraseGenerator. All weights/thresholds (DEFAULT_WEIGHTS,
-SMOOTH_INTERVAL_MAX_SEMITONES, NEAR_REPEAT_MAX_DISTANCE) are explicit
+SMOOTH_INTERVAL_MAX_SEMITONES, AUTOCORRELATION_MAX_LAG) are explicit
 placeholders, same honest status as INTENSITY_SPREAD (comping.py),
 REFERENCE_MAX_DENSITY (director.py), and DEFAULT_MOTIF_STRENGTH (sax.py) --
 needing real tuning once there's a way to listen and compare, not asserted as
@@ -49,7 +49,6 @@ musically validated.
 """
 
 import math
-from collections import Counter
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -70,8 +69,9 @@ MODAL_LEAP_SEMITONES = frozenset({5, 7})  # P4, P5 -- the quartal leaps Wolfson'
                                             # (phrase_generator.py's MODAL_P4_BONUS/
                                             # MODAL_P5_BONUS); tolerated by
                                             # contour_smoothness only when modal=True.
-NEAR_REPEAT_WINDOW = 4         # contour-string window length for near-repeat comparison
-NEAR_REPEAT_MAX_DISTANCE = 1   # placeholder: windows within this edit distance count as near-repeats
+AUTOCORRELATION_MAX_LAG = 4  # Phase 34 -- matches extract_interval_motifs' own longest
+                               # n-gram (2, 3, 4); the longest repeat period repetition()
+                               # checks for.
 DISSONANT_SEMITONE_DISTANCE = 1  # a note exactly this far from the nearest in-scale pitch
                                    # class -- the "minor 9th"/major-7th-clash relationship,
                                    # judged as the harshest dissonance in ordinary melodic
@@ -107,21 +107,21 @@ BREATH_FRACTION_WIDTH = 0.08   # placeholder -- same bell-curve treatment as
 DEFAULT_WEIGHTS = {
     "tonal_conformity": 0.2,
     "contour_smoothness": 0.1,
-    # NEGATIVE (Phase 33) -- repetition() returns 1.0 when a chunk SHOWS a
-    # repeated pattern; originally blended positively (Phase 12's own
-    # "motivic restatement as coherence" framing, a real, legitimate
-    # technique). Phase 30's critic baseline found combo shows it in 64.8%
-    # of chunks vs. WJD's real 29.4% -- combo already over-relies on it, so
-    # a plain weight INCREASE (the literal reading of "reweight using the
-    # real number") would have pushed selection toward MORE repetition, the
-    # wrong direction. Sign flipped instead, same magnitude as before (not
-    # yet retuned to a new size -- see critic_baseline.py's own real
-    # before/after numbers for whether -0.1 alone was enough). repetition()
-    # itself is untouched -- still a clear, tested, individually meaningful
-    # "does this chunk show a pattern" signal; only its ROLE in the blend
-    # changed. Weights no longer sum to 1.0 (0.8 now) -- never a strictly
-    # enforced invariant, just prior calibration bookkeeping.
-    "repetition": -0.1,
+    # POSITIVE again (Phase 34) -- Phase 33 flipped this negative after
+    # Phase 30 found combo showed the OLD binary "any exact/near-repeat"
+    # detector far more than real WJD solos (64.8% vs 29.4%). David's
+    # correction: that conflated literal repetition with the real, positive
+    # thing -- deliberate repeating PATTERN FRAGMENTS, which real solos use
+    # to build longer structures. repetition() is now a continuous
+    # autocorrelation-based measure of exactly that (Phase 34), so a real
+    # positive quality is being rewarded again, not the old binary
+    # literal-repeat flag. Magnitude restored to the original pre-Phase-33
+    # value as the smallest deliberate starting point -- whether it's the
+    # right size (or whether combo still over-shows even this better-
+    # grounded measure relative to WJD) is checked empirically in Phase 34's
+    # own verification, not assumed correct just because the polarity now
+    # makes more sense.
+    "repetition": 0.1,
     "call_response_relatedness": 0.1,
     "singability": 0.15,
     "phrasing": 0.15,
@@ -412,35 +412,74 @@ def contour_smoothness(notes: list, modal: bool = False) -> float:
     return smooth / len(intervals)
 
 
+def _autocorrelation(seq: list, lag: int) -> float:
+    """Normalized (Pearson-style) autocorrelation of seq against itself
+    shifted by `lag` steps -- a value near 1.0 means the sequence tends to
+    repeat with that period. A constant sequence (zero variance -- e.g. a
+    scale run, the same interval every step) returns 0.0: trivially
+    self-similar in a way contour_smoothness/tonal_conformity already cover,
+    not a "pattern fragment" in the motivic sense repetition() below cares
+    about. 0.0 for a nonsensical lag (< 1, or >= the sequence length)."""
+    n = len(seq)
+    if lag < 1 or lag >= n:
+        return 0.0
+    mean = sum(seq) / n
+    variance = sum((x - mean) ** 2 for x in seq)
+    if variance == 0:
+        return 0.0
+    covariance = sum((seq[i] - mean) * (seq[i + lag] - mean) for i in range(n - lag))
+    return covariance / variance
+
+
 def repetition(notes: list) -> float:
-    """1.0 if the phrase shows evidence of a repeated pattern, else 0.0 --
-    combines exact n-gram repetition (extract_interval_motifs, ported Phase 11:
-    does any motif recur 2+ times) with NEAR-repetition via edit distance on the
-    phrase's own U/D/S contour string (new here, inspired directly by the
-    notebook's cs()/contour()/editdistance approach) -- catches a varied
-    restatement of a lick that exact tuple-matching misses. Fewer than 3 real
-    notes -> 0.0: too short for anything to recur."""
+    """How strongly this phrase shows a REPEATING PATTERN FRAGMENT -- Phase
+    34, replacing an earlier binary "does any exact/near-repeat exist"
+    detector. David's own correction to an even earlier fix (Phase 33, which
+    treated all detected repetition as bad): literal, verbatim repetition
+    isn't the thing that matters -- real solos build longer structures out
+    of repeating FRAGMENTS, shapes rather than necessarily identical notes.
+    Measured via autocorrelation (David's own suggestion) of the phrase's
+    interval sequence AND its U/D/S contour sequence (numeric-encoded), at
+    lags 1..AUTOCORRELATION_MAX_LAG -- transposition-invariant by
+    construction (an interval/contour sequence doesn't care about absolute
+    pitch), so this measures shape recurrence, not literal note repetition,
+    directly matching "pattern fragment repeat, not literal repeat". Both
+    sequences are checked, not just intervals: contour is a coarser,
+    magnitude-blind reduction, so it catches "the same shape of ups/downs,
+    different-sized steps each time" -- a genuine pattern-fragment case
+    interval-only autocorrelation would miss.
+
+    Deliberately does NOT try to distinguish deliberate development from
+    being stuck in a loop -- a stuck, verbatim loop autocorrelates AT LEAST
+    as strongly as a varied, developing restatement, so this metric can't
+    make that distinction on its own, and isn't asked to (David's own call):
+    other metrics (tonal_conformity, contour_smoothness, phrasing,
+    register_usage, call_response_relatedness) are expected to catch
+    genuinely stuck/dull playing through their own signals; a dedicated
+    "stuck in a loop" or "dull solo" detector is a real, separate,
+    explicitly deferred future idea if that turns out not to be enough.
+
+    Score is the highest POSITIVE autocorrelation found across both
+    sequences and all checked lags, clipped to [0, 1] -- negative
+    (anti-)correlation is alternation, not a repeating fragment, and isn't
+    counted. Fewer than 3 real notes -> 0.0: too short for any lag to be
+    meaningful."""
     real = _real_notes(notes)
     pitches = [n["pitch"] for n in real]
     if len(pitches) < 3:
         return 0.0
 
-    motifs = extract_interval_motifs(real)
-    exact = 1.0 if any(count >= 2 for count in Counter(motifs).values()) else 0.0
+    intervals = [pitches[i + 1] - pitches[i] for i in range(len(pitches) - 1)]
+    contour_numeric = [{"U": 1, "D": -1, "S": 0}[c] for c in _contour_string(pitches)]
 
-    contour = _contour_string(pitches)
-    near = 0.0
-    if len(contour) >= NEAR_REPEAT_WINDOW * 2:
-        windows = [contour[i : i + NEAR_REPEAT_WINDOW] for i in range(len(contour) - NEAR_REPEAT_WINDOW + 1)]
-        for i in range(len(windows)):
-            for j in range(i + NEAR_REPEAT_WINDOW, len(windows)):
-                if _levenshtein(windows[i], windows[j]) <= NEAR_REPEAT_MAX_DISTANCE:
-                    near = 1.0
-                    break
-            if near:
-                break
-
-    return max(exact, near)
+    best = 0.0
+    for seq in (intervals, contour_numeric):
+        for lag in range(1, min(AUTOCORRELATION_MAX_LAG, len(seq) - 1) + 1):
+            if len(seq) - lag >= 2:  # at least 2 overlapping pairs -- a single
+                                       # pair would make correlation trivially
+                                       # perfect (or perfectly anti-) by chance
+                best = max(best, _autocorrelation(seq, lag))
+    return max(0.0, min(1.0, best))
 
 
 def motif_adherence(notes: list, motif_targets: list) -> float:

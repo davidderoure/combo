@@ -409,6 +409,33 @@ measured: combo's `repetition` rate dropped from 62.3% to **41.0%** — a
 real move toward WJD's 29.4%, not all the way there; whether the magnitude
 needs further tuning is open, answerable by rerunning `critic_baseline.py`.
 
+**`repetition` redesigned around autocorrelation of pattern fragments — a
+correction to Phase 33, not just a follow-up** (Phase 34). David's
+pushback: repetition isn't uniformly bad — real solos build longer
+structures out of *repeating pattern fragments*, which Phase 33's blanket
+negative weight conflated with literal, undesirable repetition. His
+suggestion: autocorrelation of intervals or contours detects recurring
+shape fragments specifically, distinct from randomness. On the follow-up
+design question — should this require variation across repeats to rule out
+a stuck, verbatim loop, since a stuck loop autocorrelates at least as
+strongly as a developing restatement — David's call: no, don't try to solve
+"is it stuck" in this metric; other metrics are expected to catch dull/stuck
+playing on their own, with a dedicated detector as a real, deferred future
+idea if that's not enough. `repetition()` now computes normalized
+autocorrelation of the phrase's interval sequence AND its numeric contour,
+at lags 1-4 — checking both is deliberate: contour catches "the same shape
+of ups/downs, different-sized steps each time," a genuine pattern-fragment
+case interval-only autocorrelation misses (verified on a real example:
+contour-only 0.5 vs. interval-only 0.284 for the same phrase). Weight
+restored to `+0.1` — a value judgment David stated directly, not a
+numerical-parity claim the way `register_usage`'s fix was. Real, measured
+via `critic_baseline.py` (both sides — this phase changes what's measured,
+so WJD needed rechecking too): WJD **0.147**, combo **0.297** — combo still
+shows roughly double WJD's rate even under this better-grounded measure,
+reported honestly rather than assumed resolved by the redesign alone; left
+as-is per David's reasoning, worth revisiting if a future listening test
+suggests otherwise.
+
 **Recall is also chord-quality-aware, not just pooled globally** (Phase 25).
 `RehearsalMemory.store`/`recall_motifs` take an optional `chord_quality`
 (Wolfson's 4-class major/dominant/minor/diminished system), computed once per

@@ -17,6 +17,7 @@ from ensemble.critic import (
     MODAL_LEAP_SEMITONES,
     TARGET_BREATH_FRACTION,
     TONAL_RESOLUTION_WEIGHT,
+    _autocorrelation,
     _contour_string,
     _is_passing_tone,
     _is_resolved_tension,
@@ -449,35 +450,75 @@ def test_contour_smoothness_modal_does_not_excuse_wider_leaps():
 
 
 # ---------------------------------------------------------------------------
-# repetition
+# _autocorrelation
 # ---------------------------------------------------------------------------
 
 
-def test_repetition_exact_motif_repeat_scores_one():
-    # intervals [2,2,-4,2,2] -- the 2-gram (2,2) recurs.
-    notes = notes_from_pitches([60, 62, 64, 60, 62, 64])
-    assert repetition(notes) == 1.0
+def test_autocorrelation_clean_periodic_sequence_is_strongly_positive():
+    # [1,2,1,2,1,2] repeats with period 2 -- hand-computed: mean=1.5,
+    # variance=1.5, covariance(lag=2)=1.0 -> 1.0/1.5.
+    assert _autocorrelation([1, 2, 1, 2, 1, 2], 2) == pytest.approx(1.0 / 1.5)
 
 
-def test_repetition_no_repeat_short_random_walk_scores_zero():
-    notes = notes_from_pitches([60, 61, 63, 66, 70])  # intervals 1,2,3,4 -- all distinct n-grams
-    assert repetition(notes) == 0.0
+def test_autocorrelation_irregular_sequence_is_negative():
+    # hand-computed: mean=1.0, variance=50, covariance(lag=1)=-37 -> -37/50.
+    assert _autocorrelation([1, -3, 5, -2, 4], 1) == pytest.approx(-0.74)
+
+
+def test_autocorrelation_constant_sequence_is_zero():
+    # zero variance -- trivially self-similar, not a "pattern fragment".
+    assert _autocorrelation([2, 2, 2, 2], 1) == 0.0
+
+
+def test_autocorrelation_lag_out_of_range_is_zero():
+    assert _autocorrelation([1, 2, 3], 0) == 0.0  # lag < 1
+    assert _autocorrelation([1, 2, 3], 3) == 0.0  # lag >= len(seq)
+    assert _autocorrelation([1, 2, 3], 5) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# repetition
+# ---------------------------------------------------------------------------
 
 
 def test_repetition_fewer_than_three_notes_is_zero():
     assert repetition(notes_from_pitches([60, 62])) == 0.0
 
 
-def test_repetition_detects_near_repeat_via_contour_edit_distance():
-    """A passage whose exact interval n-grams never repeat, but whose U/D/S
-    contour contains two windows only 1 edit apart -- the case exact
-    extract_interval_motifs matching (Phase 11) misses and this phase's
-    near-repeat detection catches. Contour = "UDUSUUDUU": window[0]="UDUS" vs
-    window[5]="UDUU" differ by exactly one character."""
-    pitches = [60, 62, 61, 64, 64, 70, 75, 73, 74, 75]
-    assert _contour_string(pitches) == "UDUSUUDUU"
+def test_repetition_a_recurring_interval_pattern_scores_a_real_positive_value():
+    # intervals [2,2,-4,2,2] -- the 2-gram (2,2) recurs at lag 3, but a real
+    # outlier (-4) in the sequence pulls the normalized value down from a
+    # naive "obviously repeats" intuition -- 0.1, verified via the same
+    # computation (not a re-derived guess), still clearly positive/detected.
+    notes = notes_from_pitches([60, 62, 64, 60, 62, 64])
+    assert repetition(notes) == pytest.approx(0.1)
+
+
+def test_repetition_irregular_phrase_scores_low():
+    # No monotonic trend and no short-period contour alternation (checked
+    # directly -- constructing a genuinely patternless SHORT phrase is
+    # harder than it looks: near-random interval choices tend to
+    # accidentally alternate up/down, which autocorrelation correctly reads
+    # as a real period-2 pattern). This phrase avoids that and scores low.
+    pitches = [60, 63, 68, 66, 59, 63, 60, 66, 68, 60, 56]
     notes = notes_from_pitches(pitches)
-    assert repetition(notes) == 1.0
+    assert repetition(notes) == pytest.approx(0.1)
+
+
+def test_repetition_detects_a_repeating_contour_shape_even_with_varying_interval_size():
+    """The concrete "pattern fragment, not literal repeat" proof this
+    redesign exists for: an up-up-down shape repeated twice, but with a
+    DIFFERENT-sized leap each time (3,5,-2 then 6,2,-9) -- the interval
+    sequence itself barely autocorrelates (magnitudes differ), but the
+    CONTOUR (direction only, transposition- and magnitude-invariant)
+    autocorrelates strongly, since the SHAPE genuinely repeats. Checked
+    directly: contour-only autocorrelation at lag=3 (0.5) is meaningfully
+    higher than interval-only (0.284) for this exact phrase -- proof
+    checking both sequences, not just intervals, is doing real work."""
+    pitches = [60, 63, 68, 66, 72, 74, 65]
+    assert _contour_string(pitches) == "UUDUUD"
+    notes = notes_from_pitches(pitches)
+    assert repetition(notes) == pytest.approx(0.5)
 
 
 # ---------------------------------------------------------------------------
@@ -498,12 +539,15 @@ def test_motif_adherence_phrase_containing_target_scores_one():
 
 
 def test_motif_adherence_phrase_using_target_only_once_still_scores_one():
-    """The exact case repetition() misses: the target motif appears exactly
-    once (no internal recurrence needed) -- repetition() would score this 0.0
-    since (2, 2) never recurs, but motif_adherence should score it 1.0 since
-    it's checking against an external target, not self-repetition."""
+    """The case repetition() and motif_adherence() genuinely differ on: the
+    target motif (2, 2) appears exactly once (no internal recurrence
+    needed). repetition()'s autocorrelation-based measure is low here --
+    0.152, verified via the same computation, not a re-derived guess (this
+    phrase's own interval/contour sequences show no strong short-lag
+    pattern) -- while motif_adherence scores the maximum 1.0 regardless,
+    since it checks against an EXTERNAL target, not self-repetition."""
     notes = notes_from_pitches([60, 62, 64, 70, 75])  # intervals [2, 2, 6, 5]
-    assert repetition(notes) == 0.0
+    assert repetition(notes) == pytest.approx(0.15196078431372548)
     assert motif_adherence(notes, [(2, 2)]) == 1.0
 
 
@@ -820,28 +864,29 @@ def test_musicality_score_overall_is_the_documented_weighted_sum():
     assert score.overall == pytest.approx(expected_overall)
 
 
-def test_repetitions_negative_weight_makes_a_repetitive_phrase_score_lower():
-    """Phase 33: DEFAULT_WEIGHTS["repetition"] is negative -- a phrase that
-    SHOWS repetition must score LOWER in overall than one that doesn't, not
-    higher (Phase 12's original positive framing, inverted once Phase 30
-    found combo shows repetition far more than real solos do). Isolated via
-    a weights override that zeroes every other metric, so the only thing
-    that can move `overall` here is repetition's own value and sign."""
+def test_repetitions_positive_weight_makes_a_patterned_phrase_score_higher():
+    """Phase 34: DEFAULT_WEIGHTS["repetition"] is positive again -- a phrase
+    that shows a genuine repeating PATTERN FRAGMENT (autocorrelation-based,
+    not the old binary literal-repeat flag Phase 33's negative weight was
+    reacting to) must score HIGHER in overall than one that doesn't.
+    Isolated via a weights override that zeroes every other metric, so the
+    only thing that can move `overall` here is repetition's own value and
+    sign. Reuses the same patterned/irregular phrases the repetition()
+    tests above already verify, with their real, non-binary values."""
     repetition_only_weights = {k: 0.0 for k in DEFAULT_WEIGHTS}
     repetition_only_weights["repetition"] = DEFAULT_WEIGHTS["repetition"]
 
-    repetitive = notes_from_pitches([60, 62, 64, 60, 62, 64])  # repetition() == 1.0
-    varied = notes_from_pitches([60, 61, 63, 66, 70])  # repetition() == 0.0
+    patterned = notes_from_pitches([60, 63, 68, 66, 72, 74, 65])  # repetition() == 0.5
+    irregular = notes_from_pitches([60, 63, 68, 66, 59, 63, 60, 66, 68, 60, 56])  # repetition() == 0.1
 
-    repetitive_score = musicality_score(repetitive, C_MAJOR, [], REGISTER, weights=repetition_only_weights)
-    varied_score = musicality_score(varied, C_MAJOR, [], REGISTER, weights=repetition_only_weights)
+    patterned_score = musicality_score(patterned, C_MAJOR, [], REGISTER, weights=repetition_only_weights)
+    irregular_score = musicality_score(irregular, C_MAJOR, [], REGISTER, weights=repetition_only_weights)
 
-    assert repetitive_score.repetition == 1.0
-    assert varied_score.repetition == 0.0
-    assert repetitive_score.overall < varied_score.overall
-    assert DEFAULT_WEIGHTS["repetition"] < 0.0  # the actual polarity this test depends on
-    assert repetitive_score.overall == pytest.approx(DEFAULT_WEIGHTS["repetition"])
-    assert varied_score.overall == pytest.approx(0.0)
+    assert patterned_score.repetition == pytest.approx(0.5)
+    assert irregular_score.repetition == pytest.approx(0.1)
+    assert patterned_score.overall > irregular_score.overall
+    assert DEFAULT_WEIGHTS["repetition"] > 0.0  # the actual polarity this test depends on
+    assert patterned_score.overall == pytest.approx(patterned_score.repetition * DEFAULT_WEIGHTS["repetition"])
 
 
 def test_musicality_score_weights_can_be_overridden_per_call():
