@@ -267,6 +267,41 @@ classifier in `wjd_corpus.py`, reusing only the `QUAL_*` integer constants
 from the ported file, not its logic — a documented limitation worked around,
 not fixed in place, same posture as Phase 27's `tonal_conformity` fix.
 
+**A real WJD critic baseline (Phase 30) came back surprising, worth recording
+honestly rather than tidied up.** After another listening test ("still very
+beginner-noodly... stuck in a narrow range"), the natural check: does
+`musicality_score` reward real playing more than combo's own output? Built
+`critic_baseline.py` — full chord_idx (root+quality, not Phase 29's
+quality-only tagging) via `wjd_corpus.iter_solos_with_chord_idx`/
+`split_into_chord_runs` (26,357 real chunks, mean 7.6 notes), a rest-gap
+synthesis step so `phrasing()` can score real transcriptions fairly (WJD has
+no explicit rest events the way Wolfson's `_inject_rests` produces — a
+format gap, not a musical one), scored against real 20-take combo output via
+the same critic. Real result: **WJD scored LOWER than combo on 6 of 7
+sub-metrics** (`overall` 0.447 vs 0.632) — the opposite of "it should score
+well." Not read as "combo plays better than real jazz" — two of the metrics
+that favour combo most, `singability`/`phrasing`, have their target
+constants (`TARGET_BREATH_FRACTION`, `SINGABLE_DUR_CENTER`/`WIDTH`)
+literally calibrated from *combo's own generated output* (Phase 23), so
+scoring closer to that target is closer to tautological, not evidence of
+quality. `repetition` (WJD 0.29 vs combo 0.65) and `call_response_
+relatedness` (0.36 vs 0.51) read as more genuinely informative — combo
+repeats internal patterns far more than real solos do, a concrete number
+behind the "beginner-noodly" complaint. `tonal_conformity` (WJD 0.71 vs
+combo 0.87) is the most concerning, unresolved one: real playing scoring
+*lower* on the metric most directly about "in the changes" suggests the WJD
+chord classification itself may have real accuracy limits beyond the
+already-fixed `parse_chord` bug — checked for coverage and a sane
+distribution (Phase 29), never validated against ground truth. `register_
+usage` is confounded by chunk granularity (a short chord-idx run can't span
+much of any register bound regardless of a whole solo's real range) — WJD
+under its own natural pitch bound (44-93) scores lower still (0.16) than
+under combo's narrower `SAX_REGISTER` (0.29), the opposite of what "real
+players use more range" would predict, a sign the per-chunk measurement
+itself needs rethinking before trusting it. Explicitly not yet acted on —
+this is a diagnostic result to interpret together, not a finished conclusion
+or a set of constants to silently retune.
+
 Register/phrasing/tension-and-resolution (Phases 22-24) are three pieces of a
 larger "beginner vs advanced" idea from the same listening-test discussion; side-
 slipping and an actual call-site register-narrowing switch (vs. today's single

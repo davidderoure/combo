@@ -77,7 +77,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ensemble.rhythm_motifs import extract_duration_motifs
-from ensemble.wolfson.chords import QUAL_DIM, QUAL_DOM, QUAL_MAJOR, QUAL_MINOR
+from ensemble.wolfson.chords import N_CHORD_TYPES, N_QUALITIES, QUAL_DIM, QUAL_DOM, QUAL_MAJOR, QUAL_MINOR, parse_chord
 from ensemble.wolfson.motifs import extract_interval_motifs
 
 DB_PATH = Path(__file__).resolve().parent / "wjd_data" / "wjazzd.db"
@@ -120,60 +120,141 @@ def _wjd_chord_quality(chord: str) -> Optional[int]:
     return QUAL_DOM
 
 
-def _chord_changes_by_melid(db_path: Path) -> Dict[int, Tuple[List[float], List[Optional[int]]]]:
-    """melid -> (onsets, qualities) parallel lists, sorted by onset -- one
+def _wjd_chord_idx(chord: str) -> Optional[int]:
+    """Full chord_idx (root*N_QUALITIES + quality, 0-47) for a WJD chord
+    string -- Phase 30, needed because critic functions like
+    dissonance_scale/tonal_conformity depend on the actual root, not just
+    quality (unlike Phase 29's motif-frequency tagging, which is deliberately
+    quality-only since motifs are already transposition-invariant).
+
+    Combines parse_chord's root extraction (its OWN quality half has the
+    "j"=major7 bug _wjd_chord_quality above works around -- but its root
+    half is a separate step, verified reliable directly: spot-checked across
+    sharps/flats/enharmonics, e.g. parse_chord("F#7")'s root correctly comes
+    out as Gb, matching combo's own flat-only ROOTS spelling) with our own
+    corrected _wjd_chord_quality. None for 'NC' or anything parse_chord
+    itself can't find a root for."""
+    quality = _wjd_chord_quality(chord)
+    if quality is None:
+        return None
+    parsed = parse_chord(chord)
+    if parsed >= N_CHORD_TYPES:  # NC_INDEX -- parse_chord couldn't find a root
+        return None
+    root_idx = parsed // N_QUALITIES
+    return root_idx * N_QUALITIES + quality
+
+
+def _changes_by_melid(db_path: Path, classify) -> Dict[int, Tuple[List[float], List[Optional[int]]]]:
+    """melid -> (onsets, values) parallel lists, sorted by onset -- one
     query, reused for every note in that solo rather than re-queried per
-    note."""
+    note. `classify` (a chord string -> Optional[int] function -- either
+    _wjd_chord_quality or _wjd_chord_idx) determines what's tracked at each
+    change point."""
     conn = sqlite3.connect(str(db_path))
     try:
         cur = conn.execute("SELECT melid, onset, chord FROM beats WHERE chord != '' ORDER BY melid, onset")
         changes: Dict[int, Tuple[List[float], List[Optional[int]]]] = {}
         for melid, onset, chord in cur:
-            onsets, qualities = changes.setdefault(melid, ([], []))
+            onsets, values = changes.setdefault(melid, ([], []))
             onsets.append(onset)
-            qualities.append(_wjd_chord_quality(chord))
+            values.append(classify(chord))
         return changes
     finally:
         conn.close()
 
 
-def _quality_at(onset: float, onsets: List[float], qualities: List[Optional[int]]) -> Optional[int]:
-    """The chord quality active at `onset` -- the latest annotated change at
-    or before it. None if `onset` precedes the first annotated change in
-    this solo (e.g. a count-in bar) -- verified 3.9% of all 200,809 real
-    notes fall here, correctly excluded rather than mis-tagged."""
+def _value_at(onset: float, onsets: List[float], values: List[Optional[int]]) -> Optional[int]:
+    """The tagged value (quality or chord_idx, whichever `values` holds)
+    active at `onset` -- the latest annotated change at or before it. None
+    if `onset` precedes the first annotated change in this solo (e.g. a
+    count-in bar) -- verified 3.9% of all 200,809 real notes fall here at
+    the quality granularity, correctly excluded rather than mis-tagged."""
     idx = bisect.bisect_right(onsets, onset) - 1
-    return qualities[idx] if idx >= 0 else None
+    return values[idx] if idx >= 0 else None
+
+
+def _split_into_runs(tagged_notes: list, key: str) -> List[Tuple[int, list]]:
+    """Groups notes into maximal contiguous runs sharing the same tagged
+    value at `key` -- (value, notes) pairs. Notes tagged None at `key` (no
+    chord active yet) are dropped, not turned into a run -- they can't be
+    attributed. Generic version of what was originally quality-specific
+    (Phase 29); split_into_quality_runs/split_into_chord_runs below are thin
+    wrappers naming which tag each expects."""
+    runs: List[Tuple[int, list]] = []
+    current_value: Optional[int] = None
+    current_run: list = []
+    for note in tagged_notes:
+        v = note.get(key)
+        if v is None:
+            if current_run:
+                runs.append((current_value, current_run))
+                current_run = []
+            current_value = None
+            continue
+        if v != current_value:
+            if current_run:
+                runs.append((current_value, current_run))
+            current_value = v
+            current_run = []
+        current_run.append(note)
+    if current_run:
+        runs.append((current_value, current_run))
+    return runs
 
 
 def split_into_quality_runs(solo: list) -> List[Tuple[int, list]]:
     """Groups a chord_quality-tagged solo's notes into maximal contiguous
-    same-quality runs -- (quality, notes) pairs. Notes tagged
-    chord_quality=None (no chord active yet) are dropped, not turned into a
-    run -- they can't be attributed to a harmonic quality. Verified directly
-    against the real corpus: 18,944 runs, mean length 10.6 notes, 94.1% with
-    >=2 notes (the minimum extract_interval_motifs/extract_duration_motifs
-    need to produce anything)."""
-    runs: List[Tuple[int, list]] = []
-    current_quality: Optional[int] = None
-    current_run: list = []
-    for note in solo:
-        q = note.get("chord_quality")
-        if q is None:
-            if current_run:
-                runs.append((current_quality, current_run))
-                current_run = []
-            current_quality = None
-            continue
-        if q != current_quality:
-            if current_run:
-                runs.append((current_quality, current_run))
-            current_quality = q
-            current_run = []
-        current_run.append(note)
-    if current_run:
-        runs.append((current_quality, current_run))
-    return runs
+    same-quality runs -- (quality, notes) pairs. Verified directly against
+    the real corpus: 18,944 runs, mean length 10.6 notes, 94.1% with >=2
+    notes (the minimum extract_interval_motifs/extract_duration_motifs need
+    to produce anything)."""
+    return _split_into_runs(solo, "chord_quality")
+
+
+def split_into_chord_runs(solo: list) -> List[Tuple[int, list]]:
+    """Like split_into_quality_runs, but keyed on full chord_idx (Phase 30)
+    instead of just quality -- a root change breaks a run even when quality
+    doesn't, so these runs are finer-grained. Notes must come from
+    iter_solos_with_chord_idx (tagged "chord_idx"), not iter_solos (tagged
+    "chord_quality"). Verified directly against the real corpus: 26,357
+    runs, mean length 7.6 notes, median 5, 93.3% with >=2 notes."""
+    return _split_into_runs(solo, "chord_idx")
+
+
+def _iter_solos_tagged(db_path: Path, classify, tag_key: str):
+    """Shared streaming logic behind iter_solos/iter_solos_with_chord_idx --
+    one pass over the melody table, tagging each note with whatever
+    `classify` (applied to the active chord string) determines, stored under
+    `tag_key`. Every note also carries its raw "onset" (seconds) and
+    "beatdur" (seconds/beat) alongside "pitch"/"duration_beats" -- harmless
+    extra keys for iter_solos's existing consumers (extract_interval_motifs/
+    extract_duration_motifs only ever read "pitch"/"duration_beats"), and
+    exactly what critic_baseline.py (Phase 30) needs to detect real gaps
+    between notes in beat units."""
+    changes = _changes_by_melid(db_path, classify)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute("SELECT melid, onset, pitch, duration, beatdur FROM melody ORDER BY melid, onset")
+        current_melid = None
+        current_solo: list = []
+        current_onsets: List[float] = []
+        current_values: List[Optional[int]] = []
+        for melid, onset, pitch, duration, beatdur in cur:
+            if melid != current_melid:
+                if current_solo:
+                    yield current_solo
+                current_melid = melid
+                current_solo = []
+                current_onsets, current_values = changes.get(melid, ([], []))
+            v = _value_at(onset, current_onsets, current_values)
+            current_solo.append({
+                "pitch": int(round(pitch)), "duration_beats": duration / beatdur,
+                "onset": onset, "beatdur": beatdur, tag_key: v,
+            })
+        if current_solo:
+            yield current_solo
+    finally:
+        conn.close()
 
 
 def iter_solos(db_path: Path):
@@ -182,27 +263,14 @@ def iter_solos(db_path: Path):
     within each solo. chord_quality is the Wolfson QUAL_MAJOR/QUAL_DOM/
     QUAL_MINOR/QUAL_DIM class active at that note's onset, or None before
     that solo's first annotated chord change."""
-    changes = _chord_changes_by_melid(db_path)
-    conn = sqlite3.connect(str(db_path))
-    try:
-        cur = conn.execute("SELECT melid, onset, pitch, duration, beatdur FROM melody ORDER BY melid, onset")
-        current_melid = None
-        current_solo: list = []
-        current_onsets: List[float] = []
-        current_qualities: List[Optional[int]] = []
-        for melid, onset, pitch, duration, beatdur in cur:
-            if melid != current_melid:
-                if current_solo:
-                    yield current_solo
-                current_melid = melid
-                current_solo = []
-                current_onsets, current_qualities = changes.get(melid, ([], []))
-            q = _quality_at(onset, current_onsets, current_qualities)
-            current_solo.append({"pitch": int(round(pitch)), "duration_beats": duration / beatdur, "chord_quality": q})
-        if current_solo:
-            yield current_solo
-    finally:
-        conn.close()
+    yield from _iter_solos_tagged(db_path, _wjd_chord_quality, "chord_quality")
+
+
+def iter_solos_with_chord_idx(db_path: Path):
+    """Like iter_solos, but tags each note with "chord_idx" (Phase 30, full
+    root+quality) instead of just "chord_quality" -- needed by
+    critic_baseline.py, whose critic functions depend on the actual root."""
+    yield from _iter_solos_tagged(db_path, _wjd_chord_idx, "chord_idx")
 
 
 def sample_quality_run(db_path: Path, n_notes: int = 8) -> Tuple[Optional[int], list]:
@@ -228,7 +296,7 @@ def sample_quality_run(db_path: Path, n_notes: int = 8) -> Tuple[Optional[int], 
     onsets = [o for o, _ in change_rows]
     qualities = [_wjd_chord_quality(c) for _, c in change_rows]
     solo = [
-        {"pitch": int(round(p)), "duration_beats": d / bd, "chord_quality": _quality_at(onset, onsets, qualities)}
+        {"pitch": int(round(p)), "duration_beats": d / bd, "chord_quality": _value_at(onset, onsets, qualities)}
         for onset, p, d, bd in note_rows
     ]
     runs = split_into_quality_runs(solo)

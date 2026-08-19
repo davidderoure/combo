@@ -576,6 +576,7 @@ def sax_generator(
             generate.last_candidate_scores = candidate_scores
             generate.dissonance_log.append(best_dissonance)
             generate.motif_adherence_log.append(best_key[1])
+            generate.winning_score_log.append(best_score)
 
             if memory is not None:
                 memory.store(notes, score=best_score.overall, chord_quality=chord_quality)
@@ -591,4 +592,10 @@ def sax_generator(
                                     # disabled and isn't currently driving selection (Phase 20).
     generate.dissonance_mode = dissonance_mode  # exposed for testing -- same "expose the mutable
                                                   # dict directly" convention as critic_weights above
+    generate.winning_score_log = []  # one entry per chunk-build (Phase 30), the WINNING candidate's
+                                       # full MusicalityScore -- not last_candidate_scores (every
+                                       # candidate's .overall, overwritten each chunk) or
+                                       # motif_adherence_log/dissonance_log (one sub-score each) --
+                                       # this is the complete score of what was actually dispensed,
+                                       # for critic_baseline.py's real-vs-WJD comparison.
     return generate

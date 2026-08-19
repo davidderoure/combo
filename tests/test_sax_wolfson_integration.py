@@ -1287,3 +1287,52 @@ def test_corpus_familiarity_reaches_real_selection_on_a_modal_chart():
         if e.voice_id == "sax" and 0.0 <= e.start_beat < first_chunk_span
     )
     assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
+def test_winning_score_log_matches_the_real_selected_winner():
+    """Phase 30: winning_score_log holds the actual WINNING candidate's full
+    MusicalityScore per chunk-build -- one entry per chunk (build_slow_song()
+    always produces exactly 2). Verified via the same spy-and-recompute
+    discipline as every other real-consumer test in this file, NOT by
+    comparing against max(last_candidate_scores) -- selection is a
+    lexicographic (-dissonance, adherence, corpus_score, overall) key, so
+    the winner isn't necessarily the candidate with the highest .overall
+    (the whole point of Phase 18's dissonance gate)."""
+    from ensemble.critic import musicality_score
+    from ensemble.sax import chord_to_wolfson_index
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=5, seed=7)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert len(sax_gen.winning_score_log) == 2  # build_slow_song() always produces exactly 2 chunks
+    assert len(candidates) == 10  # 5 candidates x 2 chunks
+
+    f7_idx = chord_to_wolfson_index(Chord.parse("F7"))
+    first_chunk = candidates[:5]
+    recomputed_scores = [
+        musicality_score(notes, f7_idx, seed_phrase, SAX_REGISTER) for seed_phrase, kwargs, notes in first_chunk
+    ]
+    # winning_score_log[0] must be EXACTLY one of the 5 real candidates'
+    # independently-recomputed scores (frozen-dataclass equality) -- proof
+    # it holds a real winner from this batch, not a stale or fabricated value.
+    assert sax_gen.winning_score_log[0] in recomputed_scores
+    # ...and specifically the one with the lowest dissonance (Phase 18's own
+    # gate, checked first in the selection key) -- dissonance_log[0] is that
+    # winner's own real dissonance, recomputed here as a cross-check.
+    from ensemble.critic import dissonance
+    recomputed_dissonances = [dissonance(notes, f7_idx) for _sp, _kw, notes in first_chunk]
+    assert sax_gen.dissonance_log[0] == min(recomputed_dissonances)

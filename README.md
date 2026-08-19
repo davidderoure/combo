@@ -436,6 +436,25 @@ leaps when `modal=True`, and `sax_generator` threads `song.modal` into both
 `modal_strength` and `musicality_score` from the same place, so generation and
 scoring can never disagree.
 
+**A real WJD critic baseline came back surprising** (Phase 30,
+`critic_baseline.py`) — checking whether `musicality_score` rewards real
+playing more than combo's own output. Full chord_idx tagging (not Phase
+29's quality-only), a rest-gap synthesis step so `phrasing()` can score real
+transcriptions fairly (WJD has no explicit rest events), scored 24,480 real
+WJD chunks against 900 real combo chunks (20 self-test takes). Result: WJD
+scored *lower* than combo on 6 of 7 sub-metrics (`overall` 0.447 vs 0.632) —
+not evidence combo plays better, but a real finding that needs interpreting:
+`singability`/`phrasing`'s target constants were literally calibrated from
+combo's own generated output (Phase 23), so scoring closer to them is near-
+tautological; `repetition` (0.29 vs 0.65) genuinely confirms the
+"beginner-noodly" complaint in numbers (combo repeats far more than real
+solos); `tonal_conformity` (0.71 vs 0.87) is the concerning, unresolved one
+— real playing scoring lower on the metric most about "in the changes"
+suggests WJD's chord classification may have real accuracy limits beyond
+the already-fixed `parse_chord` bug, never validated against ground truth;
+`register_usage` is confounded by short per-chunk spans regardless of a
+whole solo's real range. A diagnostic result, not yet acted on.
+
 Register, phrasing, and tension-and-resolution (Phases 22-24) are three pieces
 of a larger "beginner vs advanced" idea from the same listening-test
 discussion; side-slipping and an actual call-site register-narrowing *switch*
@@ -805,7 +824,8 @@ suite is no longer sub-second once torch is imported.
   `tests/test_transitions.py`, `tests/test_sax.py`, `tests/test_memory.py`,
   `tests/test_critic.py`, `tests/test_roles.py`, `tests/test_midi_output.py`,
   `tests/test_rhythm_motifs.py`, `tests/test_wjd_corpus.py`,
-  `tests/test_corpus_motifs.py` — no MIDI hardware needed
+  `tests/test_corpus_motifs.py`, `tests/test_critic_baseline.py` — no MIDI
+  hardware needed
 - `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
   skips cleanly if they're not present (see Running, below). Three Phase 29
   tests need a second, additional thing — the built WJD corpus cache
@@ -836,13 +856,21 @@ suite is no longer sub-second once torch is imported.
   dissonance-avoidance paragraph above for what it found
   (`python out_of_key_check.py`)
 - `wjd_corpus.py` — small runnable feasibility/benchmark script (DESIGN.md §13,
-  Phases 28-29): builds a chord-quality-tagged (major/dominant/minor/
+  Phases 28-30): builds a chord-quality-tagged (major/dominant/minor/
   diminished), per-quality pitch- and duration-motif frequency table from the
   Weimar Jazz Database (`wjd_data/wjazzd.db`, gitignored — not committed),
   caches it to `wjd_data/wjd_motifs.json`, and times both the build and 20
   candidate lookups against a real sample chunk — see the corpus-similarity
   paragraphs above for the real numbers (`python wjd_corpus.py --build`,
-  `python wjd_corpus.py --benchmark`)
+  `python wjd_corpus.py --benchmark`). Also exposes `iter_solos_with_chord_idx`/
+  `split_into_chord_runs` (Phase 30, full root+quality, finer-grained than
+  the quality-only tagging used for the frequency table) for `critic_baseline.py`.
+- `critic_baseline.py` — small runnable analysis script (no MIDI/audio,
+  DESIGN.md §13, Phase 30): scores the real WJD corpus and N combo self-test
+  takes through the same `musicality_score` critic, prints a side-by-side
+  comparison — see the WJD-critic-baseline paragraph above for the real,
+  surprising numbers (`python critic_baseline.py`, `--takes N`, `--wjd-only`,
+  `--self-test-only`, `--corpus`, `--credit-resolved-tension`)
 
 ## Running
 

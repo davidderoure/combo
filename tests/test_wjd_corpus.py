@@ -1,13 +1,14 @@
-"""Tests for wjd_corpus.py's chord-quality classification and run-splitting
-logic (Phase 29) -- pure, literal chord strings/hand-built note lists as
-input, no real wjazzd.db needed. Breaks from Phase 28's "tool scripts aren't
-unit-tested" precedent deliberately: this is genuinely new classification
-logic (not pure orchestration), and it exists specifically to correct a real,
-empirically-found bug in ensemble/wolfson/chords.py's ported parse_chord --
-worth protecting with tests, same as any other real logic in this codebase."""
+"""Tests for wjd_corpus.py's chord-quality/chord-idx classification and
+run-splitting logic (Phases 29-30) -- pure, literal chord strings/hand-built
+note lists as input, no real wjazzd.db needed. Breaks from Phase 28's "tool
+scripts aren't unit-tested" precedent deliberately: this is genuinely new
+classification logic (not pure orchestration), and it exists specifically to
+correct a real, empirically-found bug in ensemble/wolfson/chords.py's ported
+parse_chord -- worth protecting with tests, same as any other real logic in
+this codebase."""
 
-from ensemble.wolfson.chords import QUAL_DIM, QUAL_DOM, QUAL_MAJOR, QUAL_MINOR
-from wjd_corpus import _wjd_chord_quality, split_into_quality_runs
+from ensemble.wolfson.chords import N_QUALITIES, QUAL_DIM, QUAL_DOM, QUAL_MAJOR, QUAL_MINOR
+from wjd_corpus import _wjd_chord_idx, _wjd_chord_quality, split_into_chord_runs, split_into_quality_runs
 
 
 def test_wjd_chord_quality_plain_dominant():
@@ -109,3 +110,52 @@ def test_split_into_quality_runs_single_quality_solo_is_one_run():
 
 def test_split_into_quality_runs_empty_input():
     assert split_into_quality_runs([]) == []
+
+
+# ---------------------------------------------------------------------------
+# _wjd_chord_idx / split_into_chord_runs (Phase 30)
+# ---------------------------------------------------------------------------
+
+
+def test_wjd_chord_idx_combines_root_and_quality():
+    # G=7 (ROOTS index), quality DOM
+    assert _wjd_chord_idx("G7") == 7 * N_QUALITIES + QUAL_DOM
+    # C=0, quality MIN
+    assert _wjd_chord_idx("C-7") == 0 * N_QUALITIES + QUAL_MINOR
+
+
+def test_wjd_chord_idx_uses_the_corrected_quality_for_the_j_prefix_case():
+    # Ab=8 -- parse_chord's OWN quality half would get this wrong (DOM, not
+    # MAJOR, the Phase 29 bug); _wjd_chord_idx must use our corrected
+    # classifier for the quality half, not parse_chord's.
+    assert _wjd_chord_idx("Abj7") == 8 * N_QUALITIES + QUAL_MAJOR
+
+
+def test_wjd_chord_idx_handles_sharp_roots_via_enharmonic_flat_spelling():
+    # F#7 -- parse_chord's root comes out as Gb (index 6), combo's own
+    # flat-only ROOTS spelling, verified directly against real inference.
+    assert _wjd_chord_idx("F#7") == 6 * N_QUALITIES + QUAL_DOM
+
+
+def test_wjd_chord_idx_no_chord_is_none():
+    assert _wjd_chord_idx("NC") is None
+
+
+def test_split_into_chord_runs_groups_by_full_chord_idx_not_just_quality():
+    # Same quality (dominant) but different roots -- chord_idx tagging must
+    # still split them, unlike split_into_quality_runs which would pool them.
+    g7 = 7 * N_QUALITIES + QUAL_DOM
+    c7 = 0 * N_QUALITIES + QUAL_DOM
+    notes = [
+        {"pitch": 60, "chord_idx": g7},
+        {"pitch": 62, "chord_idx": g7},
+        {"pitch": 64, "chord_idx": c7},
+        {"pitch": 65, "chord_idx": c7},
+    ]
+    runs = split_into_chord_runs(notes)
+    assert runs == [(g7, notes[0:2]), (c7, notes[2:4])]
+
+
+def test_split_into_chord_runs_drops_none_and_empty_input():
+    assert split_into_chord_runs([{"pitch": 60, "chord_idx": None}]) == []
+    assert split_into_chord_runs([]) == []
