@@ -434,6 +434,28 @@ def demo_sax_wolfson(chart_path: Path) -> None:
     print(f"    n_candidates=10: score={max(searched_sax_gen.last_candidate_scores):.3f} "
           f"(best of {[round(s, 3) for s in searched_sax_gen.last_candidate_scores]})")
 
+    print("\n  Responding to its own previous phrase (Phase 37): own_voice_id, when")
+    print("  given, appends this voice's own recent notes to the seed phrase")
+    print("  ALONGSIDE the target voice's -- mirroring Wolfson's own self-play")
+    print("  (\"the sax continuously responds to itself\"). Off by default. A real,")
+    print("  named side effect: call_response_relatedness reads the whole seed")
+    print("  phrase, so it partly reflects self-relatedness once active -- shown")
+    print("  here per chunk, same seed/chart both runs, off vs. on:\n")
+
+    bass_off = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen_off = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=9)
+    sax_off = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen_off)
+    Session(song=slow_song, voices=[bass_off, sax_off]).generate(mode=MACHINE_SPEED)
+
+    bass_on = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen_on = sax_generator(SAX_REGISTER, target_voice_id="bass", own_voice_id="sax", n_candidates=1, seed=9)
+    sax_on = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen_on)
+    Session(song=slow_song, voices=[bass_on, sax_on]).generate(mode=MACHINE_SPEED)
+
+    for i, (off_score, on_score) in enumerate(zip(sax_gen_off.winning_score_log, sax_gen_on.winning_score_log)):
+        print(f"    chunk {i}: call_response_relatedness off={off_score.call_response_relatedness:.3f} "
+              f"on={on_score.call_response_relatedness:.3f}")
+
 
 @contextmanager
 def _counting_phrase_generator_calls():

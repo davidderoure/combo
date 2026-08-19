@@ -100,6 +100,45 @@ def test_bar_zero_empty_seed_does_not_crash():
         assert SAX_REGISTER[0] <= event.pitch <= SAX_REGISTER[1]
 
 
+def test_own_voice_id_adds_self_history_to_the_seed_on_the_second_chunk():
+    """Phase 37: build_slow_song() always produces exactly 2 chunks
+    (DEFAULT_PLAN_BARS=4 over an 8-bar hold). Chunk 1 (bar 0) has nothing
+    dispensed by anyone yet, so its seed_phrase should be empty, same as
+    today (own_voice_id changes nothing when there's no history to add).
+    Chunk 2's seed_phrase should be the bass's recent notes FOLLOWED BY the
+    sax's own real dispensed notes from bars 0-3 -- verified via the same
+    computation (_build_seed_phrase, already trusted), not re-derived by
+    hand, the established discipline throughout this file."""
+    from ensemble.sax import _build_seed_phrase
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    seed_phrases = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        seed_phrases.append(seed_phrase)
+        return original(self, seed_phrase, **kwargs)
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", own_voice_id="sax", n_candidates=1, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    assert len(seed_phrases) == 2  # n_candidates=1, 2 chunks
+    first_seed, second_seed = seed_phrases
+    assert first_seed == []  # bar 0 -- nothing dispensed by anyone yet
+
+    second_chunk_start = 4 * BEATS_PER_BAR  # DEFAULT_PLAN_BARS=4
+    since_beat = 2 * BEATS_PER_BAR  # lookback_bars=2 default
+    expected_bass = _build_seed_phrase(timeline, "bass", since_beat, second_chunk_start)
+    expected_own = _build_seed_phrase(timeline, "sax", since_beat, second_chunk_start)
+    assert expected_own  # the real proof self-history exists to add
+    assert second_seed == expected_bass + expected_own
+
+
 def test_sax_events_never_cross_their_own_bar_boundary():
     timeline = make_session(seed=3).generate()
     sax_events = [e for e in timeline if e.voice_id == "sax"]

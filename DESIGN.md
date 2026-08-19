@@ -789,6 +789,47 @@ tool); a real selection-behaviour integration test (spy-and-recompute over
 real generated candidates on the Dm7 bar of a genuine ii-V-I chart) confirms
 the widening genuinely differs from the pre-Phase-36 scale for at least one
 real candidate, never scoring *worse* under the new scale.
+
+**The sax can now optionally respond to its own previous phrase, not just the
+bass (Phase 37).** Prompted by David's own observation that Wolfson's self-play
+sounded much more alive to listening musicians than combo's current sax,
+despite sharing the same generator core, and his hypothesis: Wolfson "feeds off
+itself." Checked directly against Wolfson's actual source, not assumed:
+`main.py`'s self-play mode docstring says plainly *"the system feeds its own
+sax output back as input... the sax continuously responds to itself"* —
+mechanically, its own just-played notes are re-injected as the next call's
+seed, alternating MIDI channels purely so it *sounds* like two voices trading.
+combo's `sax_generator` always seeded from `target_voice_id` ("bass" at every
+real call site) and never its own prior output. A striking finding, verified
+empirically before designing around it: `Session.generate()`'s existing
+snapshot rule already means `_build_seed_phrase` reads a voice's own past
+notes correctly if `target_voice_id` happens to equal that voice's own id — no
+`Session`/`Timeline` change needed at all, confirmed by a real run pointing
+`target_voice_id="sax"` at its own eventual id. But a full swap throws away
+real ensemble listening, which isn't what was wanted ("improvising musicians
+do in a sense respond to themselves" — additive, not exclusive). New
+`own_voice_id: Optional[str] = None` parameter instead: the seed phrase
+becomes `target_voice_id`'s recent notes **followed by** this voice's own
+recent notes, added alongside the target, not replacing it. A real modeling
+concern ruled out the more obvious merge strategy first: interleaving both
+voices' notes by onset (true chronological order) would mix two *simultaneous*
+voices' pitches into one monophonic token stream `phrase_to_tokens`
+(`ensemble/wolfson/encoding.py`) was never trained to expect — checked
+directly that it computes each note's duration from its own onset/offset
+alone, so plain **concatenation** (not interleaving) is exactly as safe as a
+single-voice seed, just longer. Default `None` reproduces today's bass-only
+seeding exactly. A real, named side effect: `call_response_relatedness`
+(`ensemble/critic.py`) reads the whole seed phrase, so with `own_voice_id`
+active it partly measures relatedness to the voice's *own* recent playing too
+— shown directly in `ensemble/demo.py`'s new comparison (same seed/chart, off
+vs. on): chunk 1's `call_response_relatedness` moved from 0.333 to 0.600, a
+real, visible shift. `self_test.py --respond-to-self` is the real listening
+A/B, off by default. Explicitly deferred: Wolfson's separate riff/repeat
+mechanism (literally replaying the last phrase verbatim a few times before
+evolving it) — a different, repeat-then-develop device, not attempted here;
+extending this to `markov_sax_generator` (Phase 35, deliberately kept
+comparison-focused).
+
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a

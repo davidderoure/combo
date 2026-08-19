@@ -22,6 +22,11 @@ whole ensemble rather than one bass+sax pair).
                                                 # recalled motif or modal_strength --
                                                 # needs `python wjd_corpus.py --build`
                                                 # to have been run first
+    python self_test.py --respond-to-self       # sax also seeds each chunk from its
+                                                # own recent notes, alongside the bass
+                                                # (Phase 37) -- mirrors Wolfson's own
+                                                # self-play ("the sax continuously
+                                                # responds to itself")
 
 Generation is machine_speed (instant) — DESIGN.md §4's "generation produces a
 symbolic timeline, playback/scheduling is a separate stage" architecture is
@@ -112,6 +117,7 @@ def build_voices(
     credit_resolved_tension: bool = False,
     disable_singability: bool = False,
     corpus: Optional[CorpusMotifs] = None,
+    respond_to_self: bool = False,
 ):
     """Returns (voices, sax_gen) -- sax_gen is the bare generator closure behind
     the sax Voice (or None if sax_best.pt isn't present), kept separately so
@@ -133,7 +139,13 @@ def build_voices(
     corpus (Phase 29): passed straight through to sax_generator -- only
     affects selection on chunks already pushed off the model's natural
     distribution (a recalled motif or a modal chart), see sax_generator's own
-    docstring. None (default) is exactly today's behaviour."""
+    docstring. None (default) is exactly today's behaviour.
+
+    respond_to_self (Phase 37): off by default -- today's bass-only seeding
+    stays the default sound. Pass --respond-to-self to also seed each chunk
+    from the sax's own recent notes, alongside the bass, mirroring Wolfson's
+    own self-play ("the sax continuously responds to itself") -- see
+    sax_generator's own docstring for the full reasoning."""
     bass = Voice(
         id="bass",
         instrument="bass (walking-bass stub -- real bass generation isn't built yet)",
@@ -157,6 +169,7 @@ def build_voices(
         sax_gen = sax_generator(
             SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=8, motif_recall_candidates=20,
             credit_resolved_tension=credit_resolved_tension, corpus=corpus,
+            own_voice_id="sax" if respond_to_self else None,
         )
         if disable_singability:
             sax_gen.critic_weights["singability"] = 0.0
@@ -220,6 +233,11 @@ def main() -> None:
                               "distribution (a recalled motif or a modal chart) -- see "
                               "ensemble/sax.py's sax_generator docstring. Needs "
                               "`python wjd_corpus.py --build` to have been run first.")
+    parser.add_argument("--respond-to-self", action="store_true",
+                         help="Phase 37: also seed each chunk from the sax's own recent notes, "
+                              "alongside the bass -- mirroring Wolfson's own self-play ('the sax "
+                              "continuously responds to itself'). Off by default: today's "
+                              "bass-only seeding stays the default sound.")
     args = parser.parse_args()
 
     if args.list_out:
@@ -243,7 +261,7 @@ def main() -> None:
         print(f"\nGenerating{label}...")
         voices, sax_gen = build_voices(
             memory, credit_resolved_tension=args.credit_resolved_tension, disable_singability=args.no_singability,
-            corpus=corpus,
+            corpus=corpus, respond_to_self=args.respond_to_self,
         )
         session = Session(song=song, voices=voices)
         timeline = session.generate(mode=MACHINE_SPEED)

@@ -857,6 +857,33 @@ over real generated candidates on a genuine Dm7 bar) confirms the widening
 genuinely differs from the old scale for at least one real candidate, never
 scoring worse.
 
+**The sax can now optionally respond to its own previous phrase, not just the
+bass** (Phase 37). David asked why Wolfson's self-play sounded more alive to
+listening musicians than combo's current sax, despite the same generator core
+— his hypothesis: Wolfson "feeds off itself." Confirmed directly in Wolfson's
+own source: self-play mode's docstring says plainly "the sax continuously
+responds to itself," re-injecting its own just-played notes as the next seed.
+combo always seeded from `target_voice_id` ("bass" everywhere) and never its
+own prior output. A striking finding, verified before designing anything: the
+existing snapshot architecture already lets `_build_seed_phrase` read a
+voice's own history correctly if `target_voice_id` equals its own id — no
+`Session`/`Timeline` change needed at all. But a full swap would lose real
+ensemble listening, not what was wanted ("improvising musicians do in a sense
+respond to themselves" — additive). New `own_voice_id: Optional[str] = None`
+parameter: the seed becomes `target_voice_id`'s recent notes followed by this
+voice's own recent notes — **concatenated, not interleaved by onset**, checked
+directly: interleaving two simultaneous voices' pitches would mix bass- and
+sax-register notes into one monophonic token stream the model was never
+trained to expect, while concatenation (each note's duration comes only from
+its own onset/offset) is exactly as safe as a single-voice seed. Default
+`None` reproduces today's bass-only seeding exactly. Real, visible effect
+(`ensemble/demo.py`'s new comparison): `call_response_relatedness` — which
+reads the whole seed phrase, so it partly reflects self-relatedness once
+active — moves from 0.333 to 0.600 on the same chunk, off vs. on.
+`self_test.py --respond-to-self` is the real listening A/B, off by default.
+Deferred: Wolfson's separate riff/repeat mechanism (replaying the last phrase
+verbatim before evolving it) — a different device, not attempted here.
+
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
 in Phase 5 (every phase since had repeated some version of "a director-emitted

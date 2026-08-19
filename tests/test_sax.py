@@ -10,6 +10,7 @@ from song.chord import Chord, _QUALITY_ALIASES
 from ensemble.critic import dissonance_scale
 from ensemble.sax import (
     _bars_until_chord_change,
+    _build_combined_seed_phrase,
     _build_seed_phrase,
     _functional_tonic_scale,
     _ii_v_i_target,
@@ -60,6 +61,44 @@ def test_build_seed_phrase_translates_duration_exactly():
     seed = _build_seed_phrase(tl, "bass", since_beat=0.0, until_beat=4.0)
     onset, offset = seed[0]["onset"], seed[0]["offset"]
     assert (offset - onset) / seed[0]["beat_dur_sec"] == 1.75
+
+
+def test_build_combined_seed_phrase_none_reproduces_build_seed_phrase():
+    tl = Timeline([NoteEvent("bass", 43, 80, 0.0, 1.0), NoteEvent("sax", 60, 80, 0.5, 1.0)])
+    combined = _build_combined_seed_phrase(tl, "bass", None, since_beat=0.0, until_beat=4.0)
+    assert combined == _build_seed_phrase(tl, "bass", since_beat=0.0, until_beat=4.0)
+
+
+def test_build_combined_seed_phrase_appends_own_notes_after_target_notes():
+    tl = Timeline(
+        [
+            NoteEvent("bass", 43, 80, 0.0, 1.0),
+            NoteEvent("bass", 45, 80, 1.0, 1.0),
+            NoteEvent("sax", 60, 80, 0.5, 0.5),
+            NoteEvent("sax", 62, 80, 2.0, 1.0),
+        ]
+    )
+    combined = _build_combined_seed_phrase(tl, "bass", "sax", since_beat=0.0, until_beat=4.0)
+    target_only = _build_seed_phrase(tl, "bass", since_beat=0.0, until_beat=4.0)
+    own_only = _build_seed_phrase(tl, "sax", since_beat=0.0, until_beat=4.0)
+    assert combined == target_only + own_only  # target's notes, THEN own's -- not interleaved by onset
+
+
+def test_build_combined_seed_phrase_own_voice_empty_window_is_target_only():
+    tl = Timeline([NoteEvent("bass", 43, 80, 0.0, 1.0)])
+    combined = _build_combined_seed_phrase(tl, "bass", "sax", since_beat=0.0, until_beat=4.0)
+    assert combined == _build_seed_phrase(tl, "bass", since_beat=0.0, until_beat=4.0)
+
+
+def test_build_combined_seed_phrase_target_empty_window_is_own_only():
+    tl = Timeline([NoteEvent("sax", 60, 80, 0.0, 1.0)])
+    combined = _build_combined_seed_phrase(tl, "bass", "sax", since_beat=0.0, until_beat=4.0)
+    assert combined == _build_seed_phrase(tl, "sax", since_beat=0.0, until_beat=4.0)
+
+
+def test_build_combined_seed_phrase_both_empty_is_empty():
+    tl = Timeline([])
+    assert _build_combined_seed_phrase(tl, "bass", "sax", since_beat=0.0, until_beat=4.0) == []
 
 
 def _song_with_changes(*chord_durations) -> Song:

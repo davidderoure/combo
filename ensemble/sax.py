@@ -155,6 +155,31 @@ verified empirically, not assumed, that it has a real effect: 20 real one-shot
 generations at `modal_strength=0.0` vs `1.0` show P4/P5 leaps rising from 10.0%
 of intervals to 26.0%.
 
+Responding to its own previous phrase (Phase 37, DESIGN.md §12): prompted by
+David's observation that Wolfson's own self-play sounded much more alive to
+listening musicians than combo's current sax, despite sharing the same
+generator core. Checked directly against Wolfson's actual source, not
+assumed: `main.py`'s self-play mode literally feeds the sax's own just-played
+notes back in as the next call's seed ("the sax continuously responds to
+itself"), alternating MIDI channels purely so it *sounds* like two voices
+trading. combo's own sax_generator always seeds from `target_voice_id`
+("bass" at every real call site) and never its own prior output.
+`sax_generator` gains `own_voice_id: Optional[str] = None` — when given, the
+seed phrase becomes `target_voice_id`'s recent notes followed by this voice's
+OWN recent notes (`_build_combined_seed_phrase` above), added ALONGSIDE the
+target voice, not instead of it — a full self-only swap would throw away
+real ensemble listening a merge doesn't need to give up. Plain concatenation,
+not a time-sorted interleave: interleaving two simultaneous voices by onset
+would mix bass-register and sax-register pitches into one monophonic token
+stream the model was never trained to expect; concatenation avoids that
+entirely (see `_build_combined_seed_phrase`'s own docstring for the full
+reasoning). Default `None` reproduces today's bass-only seeding exactly.
+Explicitly deferred: Wolfson's separate riff/repeat mechanism (literally
+replaying the last phrase verbatim a few times before evolving it) — a
+different, repeat-then-develop device, not attempted here; extending this to
+`markov_sax_generator` (Phase 35, deliberately kept minimal/comparison-
+focused).
+
 Explicitly deferred (see DESIGN.md §12 for the full list): all ~10 of
 PhraseGenerator.generate()'s OTHER bias-layer knobs (contour, energy arc, register
 contrast, etc. — motif_targets/motif_strength are now wired, via memory) are left
@@ -228,6 +253,28 @@ def _build_seed_phrase(timeline: Timeline, target_voice_id: str, since_beat: flo
         for event in timeline
         if event.voice_id == target_voice_id and since_beat <= event.start_beat < until_beat
     ]
+
+
+def _build_combined_seed_phrase(
+    timeline: Timeline, target_voice_id: str, own_voice_id: Optional[str], since_beat: float, until_beat: float
+) -> list:
+    """seed_phrase = target_voice_id's recent notes, followed by this voice's OWN
+    recent notes (own_voice_id) when given -- letting generation respond to both
+    the other voice AND continue its own previous idea, mirroring Wolfson's own
+    self-play ("the sax continuously responds to itself" -- main.py's own module
+    docstring). Plain CONCATENATION, not a time-sorted interleave -- checked
+    directly that interleaving by onset would mix two simultaneous voices'
+    pitches into one monophonic token stream the model was never trained to
+    expect; phrase_to_tokens (ensemble/wolfson/encoding.py) computes each note's
+    duration from its own onset/offset alone, never a neighbour's, so
+    concatenation order doesn't affect any note's duration -- exactly as safe as
+    a single-voice seed, just longer. own_voice_id=None (every pre-existing
+    caller) reproduces _build_seed_phrase(timeline, target_voice_id, ...)
+    exactly -- extend on integration."""
+    seed = _build_seed_phrase(timeline, target_voice_id, since_beat, until_beat)
+    if own_voice_id is not None:
+        seed = seed + _build_seed_phrase(timeline, own_voice_id, since_beat, until_beat)
+    return seed
 
 
 def _bars_until_chord_change(song, start_beat: float, max_bars: int) -> int:
@@ -366,6 +413,7 @@ def sax_generator(
     corpus: Optional[CorpusMotifs] = None,
     model_path: Optional[str] = None,
     seed: Optional[int] = None,
+    own_voice_id: Optional[str] = None,
 ) -> Generator:
     """Build a generator that responds to target_voice_id's recent notes with a
     real LSTM-generated phrase (ensemble/wolfson/), planned plan_bars bars ahead
@@ -484,7 +532,28 @@ def sax_generator(
     Both are real, documented inconsistencies with the rest of this codebase's
     determinism pattern, not a clean port of it. Harmless today since nothing
     else in combo uses torch or reseeds Python's global random module, but
-    noted honestly rather than hidden."""
+    noted honestly rather than hidden.
+
+    own_voice_id, if given (Phase 37), must be the same string the caller will
+    ALSO use for Voice(id=own_voice_id, generator=this_closure) -- the closure
+    has no other way to learn its own future id, since Session only stamps
+    voice_id onto OUTPUT events, after generation. When given, each chunk's
+    seed_phrase becomes target_voice_id's recent notes followed by THIS
+    voice's own recent notes (_build_combined_seed_phrase above) -- prompted
+    directly by checking why Wolfson's own self-play sounded more alive:
+    "the system feeds its own sax output back as input... the sax continuously
+    responds to itself" (main.py's own docstring). combo's existing snapshot
+    architecture already supports this with zero Session/Timeline changes
+    (verified directly: pointing target_voice_id at a voice's own id already
+    works today) -- own_voice_id is purely about ADDING self-history
+    alongside the target voice, not replacing it, since a full swap would
+    lose real ensemble listening a merge doesn't need to give up. Default
+    None reproduces exactly today's bass-only seeding for every existing
+    caller. A real, honest side effect: call_response_relatedness
+    (ensemble/critic.py) reads the whole seed_phrase, so with own_voice_id
+    active it partly measures relatedness to THIS voice's own recent playing
+    too, not purely to target_voice_id -- not a bug, the natural way to
+    observe this mechanism's effect, but worth knowing going in."""
     if seed is not None:
         import random
 
@@ -514,7 +583,7 @@ def sax_generator(
         if not plan:
             span_bars = _bars_until_chord_change(song, bar_start, plan_bars)
             since_beat = max(0, bar_index - lookback_bars) * BEATS_PER_BAR
-            seed_phrase = _build_seed_phrase(timeline, target_voice_id, since_beat, bar_start)
+            seed_phrase = _build_combined_seed_phrase(timeline, target_voice_id, own_voice_id, since_beat, bar_start)
             chord_idx = chord_to_wolfson_index(song.chord_at(bar_start))
             chord_quality = chord_idx % N_QUALITIES
             functional_scale = _functional_tonic_scale(song, bar_start)
