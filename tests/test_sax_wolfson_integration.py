@@ -563,6 +563,107 @@ def test_register_usage_varies_across_real_candidates_and_reaches_selection():
     assert set(dispensed_pitches).issubset(set(winner_pitches))
 
 
+def test_sustain_quality_varies_across_real_candidates_and_reaches_selection():
+    """Phase 40: same proof as test_register_usage_varies_across_real_candidates_
+    and_reaches_selection above, for the new sustain_quality sub-score -- real
+    candidates in one chunk show genuine variance, and the winner identified via
+    the REAL lexicographic selection key matches what sax_generator actually
+    dispensed."""
+    from ensemble.critic import dissonance, motif_adherence, musicality_score
+    from ensemble.sax import _functional_tonic_scale
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        song = build_slow_song()
+        timeline = Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    second_chunk_start = 4 * BEATS_PER_BAR
+    prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)
+    prior_mean_beats = _dispensed_pitch_mean_beats(timeline, "sax", second_chunk_start)
+    last_chunk = candidates[-8:]
+    scored = [
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range, prior_mean_beats=prior_mean_beats)
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
+
+    sustain_quality_values = [s.sustain_quality for s in scored]
+    assert len(set(round(v, 6) for v in sustain_quality_values)) > 1  # genuine variance, not degenerate
+
+    recomputed_overall = [s.overall for s in scored]
+    assert recomputed_overall == sax_gen.last_candidate_scores
+
+    functional_scale = _functional_tonic_scale(song, second_chunk_start)
+    keys = [
+        (-dissonance(notes, kwargs["chord_idx"], extra_tolerated=functional_scale), motif_adherence(notes, []), score.overall)
+        for (seed_phrase, kwargs, notes), score in zip(last_chunk, scored)
+    ]
+    winner_notes = last_chunk[keys.index(max(keys))][2]
+    winner_pitches = sorted(n["pitch"] for n in winner_notes if n["pitch"] != REST_PITCH)
+    dispensed_pitches = sorted(
+        e.pitch for e in timeline
+        if e.voice_id == "sax" and second_chunk_start <= e.start_beat < second_chunk_start + BEATS_PER_BAR
+    )
+    assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
+def test_sustain_quality_uses_quartal_not_tertian_tones_on_a_modal_chart():
+    """Phase 40: song.modal=True reaches sustain_quality's own modal parameter
+    in real selection -- confirmed two ways: quartal and tertian scoring
+    genuinely differ for at least one real candidate (not a no-op), and the
+    real sax_generator's own bookkeeping (last_candidate_scores) matches
+    independent recomputation using modal=True (quartal), not modal=False."""
+    from ensemble.critic import musicality_score, sustain_quality
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        song = build_slow_song()
+        song.modal = True
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    last_chunk = candidates[-8:]
+    quartal_values = [sustain_quality(notes, kwargs["chord_idx"], modal=True) for _sp, kwargs, notes in last_chunk]
+    tertian_values = [sustain_quality(notes, kwargs["chord_idx"], modal=False) for _sp, kwargs, notes in last_chunk]
+    assert quartal_values != tertian_values  # genuinely differs for at least one real candidate
+
+    second_chunk_start = 4 * BEATS_PER_BAR
+    prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)
+    prior_mean_beats = _dispensed_pitch_mean_beats(timeline, "sax", second_chunk_start)
+    recomputed_quartal_overall = [
+        musicality_score(
+            notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, modal=True,
+            prior_range=prior_range, prior_mean_beats=prior_mean_beats,
+        ).overall
+        for seed_phrase, kwargs, notes in last_chunk
+    ]
+    assert recomputed_quartal_overall == sax_gen.last_candidate_scores
+
+
 def test_search_with_one_candidate_matches_unset_behaviour():
     """n_candidates=1 (explicit) must reproduce n_candidates-unset behaviour
     exactly -- the concrete backward-compatibility check, same seed both ways."""

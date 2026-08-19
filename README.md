@@ -343,7 +343,7 @@ contrast, ...) stay at their defaults; hidden-state continuity still resets
 **A phrasing/breath metric — "speaking in sentences"** (Phase 23). From the same
 listening test as Phase 22: "the solos are not speaking in 'sentences' with gaps
 in between, which is something that is taught by educators." `phrasing()` is the
-only one of the eight metrics that looks at raw `notes` (including `REST_PITCH`
+only one of the nine metrics that looks at raw `notes` (including `REST_PITCH`
 sentinels) rather than the `_real_notes()`-filtered view every other metric
 uses — `phrase_generator.py`'s own `_inject_rests` already splices genuine rests
 into generated output (bell-curve-weighted toward the phrase midpoint, capped at
@@ -924,6 +924,24 @@ so `_split_phrase_into_bars` needs no changes. Deferred: chord-change
 anticipation (David's own explicit deferral — real players anticipate an
 imminent change rather than merely continue across it, "we probably need to
 code that in, but let's test more first").
+
+**`sustain_quality` — duration-weighted credit for chord/quartal tones**
+(Phase 40). David's own sharp question, listening to `listtest3.mid`: "are we
+giving credit for holding notes that are in the triad/quartal vs those that
+are just in the scale?" Checked the code before answering: no. `tonal_conformity`
+counts every in-scale note equally regardless of duration; the only chord-tone
+check anywhere is a single binary bonus on the phrase's *last* note. Separately
+`chord_tones()` (ported) is always tertian, no quartal concept, even on a
+`song.modal=True` chart already biasing generation toward quartal lines. New
+standalone metric — a sibling to `tonal_conformity`, not a modification —
+measuring the duration-weighted fraction of note-TIME spent on a genuine chord
+tone (tertian, or a quartal stack — two perfect 4ths, the "So What" shape —
+when `modal=True`). No arbitrary "sustained" threshold: a note's own duration
+is simply its weight, the same idea `register_balance` already uses. Needed
+zero `ensemble/sax.py` changes — `modal` was already threaded through every
+real call. Verified empirically: 15 real generations over F7 showed real
+variance (0.17–0.60, mean 0.42), confirmed at scale via `critic_baseline.py
+--self-test-only` (900 chunks, mean 0.4626).
 
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built

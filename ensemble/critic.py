@@ -133,6 +133,14 @@ DEFAULT_WEIGHTS = {
     # don't sum to 1.0 (never a strict invariant, per Phase 33's own note);
     # this just adds one more term.
     "register_balance": 0.15,
+    # Phase 40 -- a new placeholder weight, same status as every other. A
+    # real, orthogonal signal to tonal_conformity (which doesn't weight by
+    # duration at all): does time spent HOLDING a note land on a genuine
+    # chord/quartal tone, not just any in-scale pitch class. Real empirical
+    # check before picking this weight: 15 real one-shot generations over F7
+    # showed sustain_quality varying 0.17-0.60 (mean 0.42) -- not degenerate,
+    # a genuine discriminating signal.
+    "sustain_quality": 0.15,
 }
 
 
@@ -775,6 +783,57 @@ def register_balance(
     return max(0.0, 1.0 - abs(combined_mean - center) / (width / 2.0))
 
 
+def _quartal_tones(root: int) -> frozenset:
+    """A basic quartal triad on root -- two stacked perfect 4ths (root, +5,
+    +10), e.g. C: C-F-Bb -- the real "So What" voicing shape (root E: E-A-D
+    is root+5+10 from E). Combo-authored: chord_tones() (ported, Wolfson) has
+    no quartal concept at all, always quality-conditioned tertian root/3rd/7th
+    -- quality-NEUTRAL by design here, matching how real quartal harmony is
+    characterized by interval structure, not major/minor quality."""
+    return frozenset({root % 12, (root + 5) % 12, (root + 10) % 12})
+
+
+def sustain_quality(notes: list, chord_idx: int, modal: bool = False) -> float:
+    """Duration-weighted fraction of a phrase's real note-TIME spent on a
+    genuine chord tone -- tertian (chord_tones()) normally, or a quartal
+    stack (_quartal_tones) when modal=True -- rather than merely any
+    in-scale pitch class (Phase 40).
+
+    Prompted directly by a listening-test question: "are we giving credit
+    for holding notes that are in the triad/quartal vs those that are just
+    in the scale?" Checked the existing code before answering: no, on both
+    counts. tonal_conformity() counts every in-scale note equally toward
+    in_scale_count regardless of duration -- a whole-note 9th scores
+    identically, per note, to a whole-note root. The only chord-tone-aware
+    check anywhere is a single binary bonus for whether the phrase's LAST
+    note resolves onto one; nothing rewards a note held MID-phrase for
+    landing on something harmonically strong. This is a new, standalone
+    metric for exactly that gap -- a sibling to tonal_conformity (scale
+    membership), not a replacement: tonal_conformity/dissonance already own
+    "is this in scale / a clash"; this measures something orthogonal, "when
+    you DO sit on a note, is it a strong one."
+
+    Duration-weighted, with no arbitrary "sustained" threshold: a note's own
+    duration is simply its weight in the fraction, so holding a chord tone
+    longer earns more credit and holding a non-chord-tone longer costs more
+    -- the same "weight by real elapsed time" idea register_balance (Phase
+    36) already uses, not a new pattern. Doesn't require scale membership
+    either -- an out-of-scale held note still counts against this (0
+    contribution to the numerator, full weight in the denominator), since
+    that's a real, if different, way of "not sitting on a strong tone".
+
+    No real notes, or no chord tones for this chord_idx (NC) -> 0.0."""
+    real = _real_notes(notes)
+    if not real:
+        return 0.0
+    tones = _quartal_tones(chord_root(chord_idx)) if modal else chord_tones(chord_idx)
+    if not tones:
+        return 0.0
+    on_tone_beats = sum(n["duration_beats"] for n in real if n["pitch"] % 12 in tones)
+    total_beats = sum(n["duration_beats"] for n in real)
+    return on_tone_beats / total_beats if total_beats > 0 else 0.0
+
+
 @dataclass(frozen=True)
 class MusicalityScore:
     tonal_conformity: float
@@ -785,6 +844,7 @@ class MusicalityScore:
     phrasing: float
     register_usage: float
     register_balance: float
+    sustain_quality: float
     overall: float
 
 
@@ -810,7 +870,9 @@ def musicality_score(
     elsewhere in ensemble/sax.py's selection loop -- keeps the badness gate and
     this positive quality signal in agreement about what counts as legitimate.
     modal (Phase 27): passed straight through to contour_smoothness, matching
-    whichever modal_strength was used for this same candidate's generation.
+    whichever modal_strength was used for this same candidate's generation --
+    and, since Phase 40, to sustain_quality too (quartal tones instead of
+    tertian when True).
     prior_range (Phase 32): passed straight through to register_usage -- see
     its own docstring. prior_mean_beats (Phase 36): passed straight through to
     register_balance -- see its own docstring. All five default to their
@@ -825,6 +887,7 @@ def musicality_score(
         "phrasing": phrasing(notes),
         "register_usage": register_usage(notes, register, prior_range),
         "register_balance": register_balance(notes, register, prior_mean_beats),
+        "sustain_quality": sustain_quality(notes, chord_idx, modal),
     }
     overall = sum(scores[key] * weights.get(key, 0.0) for key in scores)
     return MusicalityScore(overall=overall, **scores)

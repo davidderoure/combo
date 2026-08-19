@@ -22,6 +22,7 @@ from ensemble.critic import (
     _is_passing_tone,
     _is_resolved_tension,
     _levenshtein,
+    _quartal_tones,
     _semitones_to_scale,
     _widened_mode_scale,
     call_response_relatedness,
@@ -36,6 +37,7 @@ from ensemble.critic import (
     register_balance,
     repetition,
     singability,
+    sustain_quality,
     tonal_conformity,
 )
 from ensemble.wolfson.chords import QUAL_DIM, QUAL_DOM, QUAL_MINOR
@@ -933,6 +935,60 @@ def test_musicality_score_threads_prior_mean_beats_into_register_balance():
 
 
 # ---------------------------------------------------------------------------
+# sustain_quality / _quartal_tones (Phase 40)
+# C_MAJOR = root 0 (C); tertian chord_tones(C_MAJOR) = {0, 4, 11} (C, E, B).
+# _quartal_tones(0) = {0, 5, 10} (C, F, Bb).
+# ---------------------------------------------------------------------------
+
+
+def test_quartal_tones_is_a_stack_of_two_perfect_fourths():
+    assert _quartal_tones(0) == {0, 5, 10}  # C-F-Bb
+    assert _quartal_tones(4) == {4, 9, 2}  # E-A-D, the real "So What" shape
+
+
+def test_sustain_quality_no_notes_is_zero():
+    assert sustain_quality([], C_MAJOR) == 0.0
+
+
+def test_sustain_quality_all_notes_on_tertian_chord_tones_is_one():
+    notes = notes_from_pitches([60, 64, 71])  # C, E, B -- all in {0, 4, 11}
+    assert sustain_quality(notes, C_MAJOR) == pytest.approx(1.0)
+
+
+def test_sustain_quality_all_notes_off_chord_tones_is_zero():
+    # D, F, A (pc 2, 5, 9) -- none in tertian {0, 4, 11}. Includes an
+    # out-of-SCALE pitch too (pc 1, C#) to show sustain_quality doesn't
+    # require scale membership, just chord-tone membership -- both score 0.0.
+    notes = notes_from_pitches([62, 65, 69])
+    assert sustain_quality(notes, C_MAJOR) == pytest.approx(0.0)
+    assert sustain_quality(notes_from_pitches([61]), C_MAJOR) == pytest.approx(0.0)  # C#, out of scale entirely
+
+
+def test_sustain_quality_is_duration_weighted():
+    notes = [
+        {"pitch": 60, "duration_beats": 2.0, "velocity_scale": 1.0},  # C -- on tone
+        {"pitch": 62, "duration_beats": 1.0, "velocity_scale": 1.0},  # D -- off tone
+    ]
+    assert sustain_quality(notes, C_MAJOR) == pytest.approx(2.0 / 3.0)
+
+
+def test_sustain_quality_modal_uses_quartal_tones_instead_of_tertian():
+    # F (pc 5): NOT a tertian chord tone of C_MAJOR ({0,4,11}), but IS a
+    # quartal tone of C ({0,5,10}) -- the concrete "quartal vs tertian
+    # actually differs" proof.
+    notes = notes_from_pitches([65])
+    assert sustain_quality(notes, C_MAJOR, modal=False) == pytest.approx(0.0)
+    assert sustain_quality(notes, C_MAJOR, modal=True) == pytest.approx(1.0)
+
+
+def test_musicality_score_threads_modal_into_sustain_quality():
+    notes = notes_from_pitches([65])  # F -- quartal tone of C, not tertian
+    score = musicality_score(notes, C_MAJOR, [], REGISTER, modal=True)
+    assert score.sustain_quality == sustain_quality(notes, C_MAJOR, modal=True)
+    assert score.sustain_quality == pytest.approx(1.0)
+
+
+# ---------------------------------------------------------------------------
 # musicality_score combination
 # ---------------------------------------------------------------------------
 
@@ -951,6 +1007,7 @@ def test_musicality_score_overall_is_the_documented_weighted_sum():
         + score.phrasing * DEFAULT_WEIGHTS["phrasing"]
         + score.register_usage * DEFAULT_WEIGHTS["register_usage"]
         + score.register_balance * DEFAULT_WEIGHTS["register_balance"]
+        + score.sustain_quality * DEFAULT_WEIGHTS["sustain_quality"]
     )
     assert score.overall == pytest.approx(expected_overall)
 

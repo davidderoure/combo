@@ -91,12 +91,13 @@ to a string of U/D/S compared by edit distance; a striking, unplanned overlap wi
 exact U/D/S vocabulary for an unrelated purpose), and Wolfson's own ported bias
 layers, three of which are repurposed from generation-time sampling biases into
 retrospective scoring functions (singability's bell curve, voice-leading's
-chord-tone resolution). All eight metrics (`tonal_conformity`, `contour_smoothness`,
+chord-tone resolution). All nine metrics (`tonal_conformity`, `contour_smoothness`,
 `repetition`, `call_response_relatedness`, `singability`, `phrasing` — Phase 23,
-`register_usage` — Phase 24, `register_balance` — Phase 36, below) are pure,
-deterministic functions needing no model inference — the first sax-adjacent test
-file since Phase 8 that's fully testable without `sax_best.pt`. `phrasing` is the
-only one of the eight that looks at raw notes (including `REST_PITCH` sentinels)
+`register_usage` — Phase 24, `register_balance` — Phase 36, `sustain_quality` —
+Phase 40, below) are pure, deterministic functions needing no model inference —
+the first sax-adjacent test file since Phase 8 that's fully testable without
+`sax_best.pt`. `phrasing` is the
+only one of the nine that looks at raw notes (including `REST_PITCH` sentinels)
 rather than the
 `_real_notes()`-filtered view every other metric uses — prompted directly by a
 listening-test observation ("the solos are not speaking in 'sentences' with gaps
@@ -888,6 +889,37 @@ but deliberately deferred idea while discussing this: real players often
 anticipate an imminent chord change rather than merely continue across it —
 "we probably need to code that in, but let's test more first" — not attempted
 in this phase.
+
+**`sustain_quality` — duration-weighted credit for chord/quartal tones (Phase
+40).** Listening to `listtest3.mid` (confirming Phase 38/39's fixes worked:
+zero retriggers, 64 genuine breaths vs. 38 before, dissonance down to 0.3%),
+David asked a sharp, specific question: "are we giving credit for holding
+notes that are in the triad/quartal vs those that are just in the scale?"
+Checked the actual code before answering: no, on both counts. `tonal_conformity`
+counts every in-scale note equally toward `in_scale_count` regardless of
+duration — a whole-note 9th scores identically, per note, to a whole-note
+root; the only chord-tone-aware check anywhere is a single binary bonus for
+whether the phrase's *last* note resolves onto one. Separately, `chord_tones()`
+(ported, `ensemble/wolfson/scales.py`) is always strictly tertian (root/3rd/
+7th) for every quality — no quartal concept at all — so even a `song.modal=True`
+chart, where `modal_strength` already biases *generation* toward quartal
+(4th-stacked) lines (Phase 27), had nothing in the critic that knew what a
+quartal "strong tone" was. New standalone metric, a sibling to `tonal_conformity`
+(not a modification — that owns "is this in scale/a clash", this owns "when
+you *do* sit on a note, is it a strong one"): duration-weighted fraction of a
+phrase's real note-TIME spent on a genuine chord tone — tertian normally, or a
+quartal stack (`_quartal_tones`, two stacked perfect 4ths, the real "So What"
+voicing shape) when `modal=True`. No arbitrary "sustained" threshold needed —
+a note's own duration is simply its weight, the same idea `register_balance`
+(Phase 36) already uses. Zero changes needed to `ensemble/sax.py`: `modal`
+was already threaded into every real `musicality_score(...)` call (for
+`contour_smoothness`), so the new sub-score reaches real selection
+automatically the moment it's added to `DEFAULT_WEIGHTS` — the same "zero
+sax.py changes" outcome Phase 23's `phrasing` had. Verified empirically before
+picking the weight: 15 real one-shot generations over F7 showed real,
+meaningful variance (0.17–0.60, mean 0.42), confirmed again at scale via
+`critic_baseline.py --self-test-only` (900 real chunks, mean 0.4626) — not a
+degenerate signal.
 
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
