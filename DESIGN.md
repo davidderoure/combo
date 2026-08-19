@@ -626,7 +626,38 @@ melodic playing, the dreaded minor 9th") — both fixed (Phase 18). The stuck
 note: `output/midi_output.py`'s cleanup only sent CC 123/120 (All Notes
 Off/All Sound Off); wolfson's own `output/midi_output.py` already documented
 that Logic's software instruments ignore both and need an explicit note_off
-per pitch — the same fix, reused, not rediscovered. The dissonance: a new
+per pitch — the same fix, reused, not rediscovered.
+
+**A second, different stuck-note cause found much later (Phase 38), mid-
+performance rather than at cleanup.** Listening to a real recorded take of
+`self_test.py --respond-to-self` (Phase 37), David again reported "some stuck
+notes," plus "a weird degeneration towards the end." Real analysis (via
+`mido`, converted through the chart's actual generation tempo) found actual
+retrigger events in the recorded MIDI stream — a note-on arriving for a pitch
+that was still sounding. Traced to a real, structural, PRE-EXISTING cause
+(verified directly: the same ~7% rate with and without `--respond-to-self`,
+so Phase 37 didn't introduce it): ~7% of consecutive same-pitch sax notes in
+the raw generated `Timeline` are scheduled with literally ZERO gap between
+one ending and the next starting — `_split_phrase_into_bars`'s tied-note
+splitting across a bar boundary, and the model itself sometimes repeating a
+pitch with no rest between. Both are musically correct in symbolic (beat)
+time; the problem is purely that a real synth needs actual elapsed time to
+release a note before the same pitch can cleanly retrigger — a real-MIDI-
+transport concern, so the fix stays entirely in the playback layer
+(`output/midi_output.py`'s `build_schedule`), matching this section's own
+"generation produces a symbolic timeline; playback is a separate stage"
+principle — nothing in generation was touched. `build_schedule` now tracks
+the last scheduled note-off time per `(channel, pitch)` and, if the next
+note-on for that same key would land within `MIN_RETRIGGER_GAP_SEC` (20ms,
+an explicit placeholder) of it, pushes that note's onset (and, to preserve
+its own duration, its offset too) just far enough later to clear the gap —
+scoped per real MIDI channel, so two voices sharing a register never affect
+each other's tracking. Verified directly, not assumed fixed: reran the same
+diagnostic across 10 real full-ensemble generations (5 with
+`--respond-to-self`, 5 without) — 9,377 real notes, zero retriggers remaining
+in any of them, down from a real ~7% rate before the fix.
+
+The dissonance: a new
 `out_of_key_check.py` (kept as a reusable tool, same lifecycle as
 `rehearsal_ab_test.py`) found ~16-22% of sax notes out of key, and — checked,
 not assumed — every single one landed exactly 1 semitone from the scale, the

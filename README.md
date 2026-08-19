@@ -236,6 +236,27 @@ Off) — wolfson's own `output/midi_output.py` already documented that Logic's
 software instruments ignore both and need an explicit `note_off` per pitch;
 the same fix is now reused here rather than rediscovered from scratch.
 
+**Updated in Phase 38 — a second, different stuck-note cause, found mid-
+performance rather than at cleanup.** Listening to a real recorded take of
+`self_test.py --respond-to-self` (Phase 37), David again reported "some stuck
+notes" and "a weird degeneration towards the end." Real analysis (`mido`,
+converted through the chart's real generation tempo) found actual retriggers
+in the recording — a note-on for a pitch that was still sounding — traced to
+a real, PRE-EXISTING, structural cause (verified: the same ~7% rate with and
+without `--respond-to-self`, so Phase 37 didn't introduce it): ~7% of
+consecutive same-pitch sax notes are generated with literally zero gap
+between one ending and the next starting (`_split_phrase_into_bars`'s
+tied-note splitting across a bar boundary; the model also sometimes repeats a
+pitch with no rest). Both are musically correct in symbolic time — the fix
+stays entirely in the playback layer, matching this piece's own "symbolic
+timeline, playback is a separate stage" architecture. `build_schedule` now
+tracks the last scheduled note-off per `(channel, pitch)` and pushes a
+same-key note-on that would land within `MIN_RETRIGGER_GAP_SEC` (20ms) of it
+just far enough later to clear the gap, preserving that note's own duration —
+scoped per channel, so voices sharing a register don't affect each other.
+Verified directly: 10 real full-ensemble generations, 9,377 notes, zero
+retriggers remaining, down from ~7%.
+
 Sax also plans several bars ahead now (Phase 10), prompted by David asking directly
 whether bar-by-bar generation loses a soloist's "conscious planning." What planning
 means mechanically here: `sax_generator` generates a chord-consistent multi-bar span

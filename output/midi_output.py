@@ -30,21 +30,62 @@ def list_output_ports() -> List[str]:
     return rtmidi.MidiOut().get_ports()
 
 
+MIN_RETRIGGER_GAP_SEC = 0.02  # 20ms -- a placeholder like every other hand-picked
+                                # constant in this codebase, not scientifically
+                                # tuned. Small enough to be inaudible as a timing
+                                # shift, large enough for a legato-style softsynth's
+                                # envelope to actually release before the same pitch
+                                # retriggers. Grounded in a real finding, not
+                                # guessed at from nothing: a real recorded take had
+                                # ~7% of consecutive same-pitch sax notes generated
+                                # with LITERALLY zero gap (ensemble/sax.py's
+                                # _split_phrase_into_bars ties a note across a bar
+                                # boundary into back-to-back same-pitch fragments by
+                                # construction; the model itself also sometimes
+                                # repeats a pitch with no rest between), and 4 real
+                                # retrigger glitches in that recording lined up with
+                                # exactly this shape.
+
+
 def build_schedule(timeline: Timeline, tempo_bpm: float, channels: Dict[str, int]) -> List[Tuple[float, bytes]]:
     """Timeline (beat-based) + tempo + voice_id->channel map -> a time-sorted list
     of (seconds_from_start, midi_message_bytes) note-on/note-off pairs. A
     voice_id with no entry in `channels` is silently skipped — an unrouted
     voice failing loud (an audibly incomplete performance) rather than
-    colliding two voices onto a guessed fallback channel."""
+    colliding two voices onto a guessed fallback channel.
+
+    Enforces MIN_RETRIGGER_GAP_SEC between a note-off and the next note-on for
+    the SAME (channel, pitch) -- both notes are musically correct in symbolic
+    (beat) time (a tied note split across a bar boundary, or a genuine repeated
+    note), but zero real elapsed time between a note-off and a same-pitch
+    note-on is exactly the shape that glitches/hangs on a real, legato-style
+    softsynth (no time to release before retriggering) -- a real-MIDI-transport
+    concern, not a musical-content one, so the fix lives entirely here, not in
+    generation. Keyed by (channel, pitch), not pitch alone, so two different
+    voices sharing a register (e.g. keys/guitar, already allowed to overlap by
+    Phase 15's role split) never affect each other's retrigger tracking.
+    Processes events in start_beat order (an explicit local sort -- `timeline`
+    isn't assumed pre-sorted) so the incremental "last note-off time per key"
+    tracking is correct. A shift only ever pushes a note LATER, never earlier,
+    and preserves that note's own duration exactly -- a small, local, inaudible
+    correction, not a rewrite of the schedule's overall timing."""
     seconds_per_beat = 60.0 / tempo_bpm
     schedule: List[Tuple[float, bytes]] = []
-    for event in timeline:
+    last_note_off_time: Dict[Tuple[int, int], float] = {}  # (channel_nibble, pitch) -> scheduled end (sec)
+    for event in sorted(timeline, key=lambda e: e.start_beat):
         channel = channels.get(event.voice_id)
         if channel is None:
             continue
         ch = channel - 1
         start = event.start_beat * seconds_per_beat
         end = start + event.duration_beats * seconds_per_beat
+        key = (ch, event.pitch)
+        prior_end = last_note_off_time.get(key)
+        if prior_end is not None and start < prior_end + MIN_RETRIGGER_GAP_SEC:
+            shift = (prior_end + MIN_RETRIGGER_GAP_SEC) - start
+            start += shift
+            end += shift
+        last_note_off_time[key] = end
         velocity = max(1, min(127, event.velocity))
         schedule.append((start, bytes([NOTE_ON | ch, event.pitch, velocity])))
         schedule.append((end, bytes([NOTE_OFF | ch, event.pitch, 0])))

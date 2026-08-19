@@ -8,9 +8,11 @@ real hardware. Real port-opening/hardware I/O is explicitly not covered here,
 same honest precedent as tests/test_midi_sources.py.
 """
 
+import pytest
+
 from ensemble.session import FakeClock
 from ensemble.timeline import NoteEvent, Timeline
-from output.midi_output import NOTE_OFF, NOTE_ON, build_schedule, play_timeline
+from output.midi_output import MIN_RETRIGGER_GAP_SEC, NOTE_OFF, NOTE_ON, build_schedule, play_timeline
 
 
 def test_single_event_produces_note_on_and_note_off_at_correct_times():
@@ -66,6 +68,60 @@ def test_multiple_voices_interleave_sorted_by_time():
     times = [t for t, _msg in schedule]
     assert times == sorted(times)
     assert times[0] == 0.0  # keys note-on first
+
+
+def test_adjacent_same_pitch_notes_get_a_minimum_retrigger_gap():
+    # 60bpm -> 1 sec/beat. The second note touches the first exactly
+    # (starts at beat 1.0, right where the first note's beat-1.0 duration ends).
+    tl = Timeline(
+        [
+            NoteEvent("sax", 60, 80, start_beat=0.0, duration_beats=1.0),
+            NoteEvent("sax", 60, 80, start_beat=1.0, duration_beats=0.5),
+        ]
+    )
+    schedule = build_schedule(tl, tempo_bpm=60.0, channels={"sax": 1})
+    note_ons = sorted(t for t, msg in schedule if msg[0] & 0xF0 == NOTE_ON)
+    note_offs = sorted(t for t, msg in schedule if msg[0] & 0xF0 == NOTE_OFF)
+    assert note_ons[0] == 0.0
+    assert note_offs[0] == 1.0  # first note unaffected
+    assert note_ons[1] == pytest.approx(1.0 + MIN_RETRIGGER_GAP_SEC)  # pushed past the gap
+    assert note_offs[1] - note_ons[1] == pytest.approx(0.5)  # its own duration is preserved
+
+
+def test_adjacent_different_pitch_notes_are_unaffected():
+    tl = Timeline(
+        [
+            NoteEvent("sax", 60, 80, start_beat=0.0, duration_beats=1.0),
+            NoteEvent("sax", 62, 80, start_beat=1.0, duration_beats=1.0),  # touches, different pitch
+        ]
+    )
+    schedule = build_schedule(tl, tempo_bpm=60.0, channels={"sax": 1})
+    note_ons = sorted(t for t, msg in schedule if msg[0] & 0xF0 == NOTE_ON)
+    assert note_ons == [0.0, 1.0]  # no shift -- only same-pitch retriggers are affected
+
+
+def test_same_pitch_notes_with_enough_gap_are_unaffected():
+    tl = Timeline(
+        [
+            NoteEvent("sax", 60, 80, start_beat=0.0, duration_beats=1.0),
+            NoteEvent("sax", 60, 80, start_beat=2.0, duration_beats=1.0),  # 1 full second of real gap
+        ]
+    )
+    schedule = build_schedule(tl, tempo_bpm=60.0, channels={"sax": 1})
+    note_ons = sorted(t for t, msg in schedule if msg[0] & 0xF0 == NOTE_ON)
+    assert note_ons == [0.0, 2.0]  # already well clear of MIN_RETRIGGER_GAP_SEC -- no shift
+
+
+def test_same_pitch_different_channels_are_unaffected():
+    tl = Timeline(
+        [
+            NoteEvent("sax", 60, 80, start_beat=0.0, duration_beats=1.0),
+            NoteEvent("keys", 60, 80, start_beat=1.0, duration_beats=1.0),  # touches, but a different channel
+        ]
+    )
+    schedule = build_schedule(tl, tempo_bpm=60.0, channels={"sax": 1, "keys": 2})
+    note_ons = sorted(t for t, msg in schedule if msg[0] & 0xF0 == NOTE_ON)
+    assert note_ons == [0.0, 1.0]  # channel-scoped -- not a real retrigger on either channel
 
 
 class FakeMidiOut:
