@@ -144,6 +144,28 @@ def _wjd_chord_idx(chord: str) -> Optional[int]:
     return root_idx * N_QUALITIES + quality
 
 
+def _wjd_expected_bass_pc(chord: str) -> Optional[int]:
+    """The pitch class a bass player 'should' land on for this chord string
+    -- Phase 31, for validating our own chord extraction against
+    beats.bass_pitch, a real per-beat MIDI note number recorded
+    INDEPENDENTLY of the chord string and of anything built in Phases
+    29-30. Ordinarily the chord's own root (_wjd_chord_idx's root half),
+    EXCEPT for a slash chord ("Ab79/C"), where the bass is explicitly
+    written as something else -- the expected pitch class then comes from
+    the part after '/' (parsed via the same _ROOT_RE + parse_chord root
+    extraction used elsewhere in this file), not the main chord's root.
+    None if unparseable or 'NC'."""
+    if "/" in chord:
+        bass_part = chord.split("/")[1]
+        m = _ROOT_RE.match(bass_part)
+        if not m:
+            return None
+        parsed = parse_chord(bass_part[: m.end()])
+        return (parsed // N_QUALITIES) if parsed < N_CHORD_TYPES else None
+    idx = _wjd_chord_idx(chord)
+    return (idx // N_QUALITIES) if idx is not None else None
+
+
 def _changes_by_melid(db_path: Path, classify) -> Dict[int, Tuple[List[float], List[Optional[int]]]]:
     """melid -> (onsets, values) parallel lists, sorted by onset -- one
     query, reused for every note in that solo rather than re-queried per

@@ -8,7 +8,13 @@ parse_chord -- worth protecting with tests, same as any other real logic in
 this codebase."""
 
 from ensemble.wolfson.chords import N_QUALITIES, QUAL_DIM, QUAL_DOM, QUAL_MAJOR, QUAL_MINOR
-from wjd_corpus import _wjd_chord_idx, _wjd_chord_quality, split_into_chord_runs, split_into_quality_runs
+from wjd_corpus import (
+    _wjd_chord_idx,
+    _wjd_chord_quality,
+    _wjd_expected_bass_pc,
+    split_into_chord_runs,
+    split_into_quality_runs,
+)
 
 
 def test_wjd_chord_quality_plain_dominant():
@@ -159,3 +165,29 @@ def test_split_into_chord_runs_groups_by_full_chord_idx_not_just_quality():
 def test_split_into_chord_runs_drops_none_and_empty_input():
     assert split_into_chord_runs([{"pitch": 60, "chord_idx": None}]) == []
     assert split_into_chord_runs([]) == []
+
+
+# ---------------------------------------------------------------------------
+# _wjd_expected_bass_pc (Phase 31)
+# ---------------------------------------------------------------------------
+
+
+def test_wjd_expected_bass_pc_plain_chord_is_its_own_root():
+    # G=7 -- matches _wjd_chord_idx's own root half for a non-slash chord.
+    assert _wjd_expected_bass_pc("G7") == 7
+    assert _wjd_expected_bass_pc("C-7") == 0
+
+
+def test_wjd_expected_bass_pc_slash_chord_uses_the_post_slash_bass_note():
+    # "Ab79/C" -- root is Ab(8), but the WRITTEN bass is C(0); the expected
+    # pitch class is the bass override, not the chord's own root.
+    assert _wjd_expected_bass_pc("Ab79/C") == 0
+    assert _wjd_expected_bass_pc("A-/G") == 7  # bass=G(7), not A(9)
+
+
+def test_wjd_expected_bass_pc_no_chord_is_none():
+    assert _wjd_expected_bass_pc("NC") is None
+
+
+def test_wjd_expected_bass_pc_unparseable_bass_part_is_none():
+    assert _wjd_expected_bass_pc("A7/xyz") is None

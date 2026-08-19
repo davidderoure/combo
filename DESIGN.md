@@ -302,6 +302,41 @@ itself needs rethinking before trusting it. Explicitly not yet acted on —
 this is a diagnostic result to interpret together, not a finished conclusion
 or a set of constants to silently retune.
 
+**Validating chord extraction against an independent signal (Phase 31)
+narrowed the `tonal_conformity` question, without fully resolving it.**
+Checking the *notes played* against the chord would just re-measure
+`tonal_conformity` itself — circular, since a poor fit could mean a wrong
+chord label or legitimate outside playing, indistinguishable from that
+signal alone (David's own catch). `beats.bass_pitch` sidesteps this: a real
+per-beat MIDI note recorded independently of the chord string and of
+anything built here, and (per a musicologist David worked with on an
+earlier piano-musicality measure) implied bassline is a real signal to
+listen for, not a proxy invented for this project. `bass_chord_check.py`
+compares our extracted root against it (handling slash chords' explicit bass
+override, `_wjd_expected_bass_pc`): 42.3% exact match, 53.7% against any
+chord tone, over 28,887 comparable rows — well above chance, far from clean
+confirmation. Aggregated by quality class, no outlier (40-46% band across
+all four) — argues against a bug concentrated the way Phase 29's
+`parse_chord` "j" bug was. But the finer, per-raw-chord-string breakdown
+found what the aggregate hid: **`sus` chords and augmented (`+7`) chords
+score dramatically worse** (`"Bbsus"` 3.4%, `"Csus"` 4.6%, `"F+7"` 15.2%),
+and bare diminished *triads* without a written 7th similarly low (`"Bbo"`
+5.6%, `"Abo"` 9.1%). A real, musically-grounded explanation rather than a
+parsing bug: augmented and diminished-seventh harmony are intervallically
+*symmetric* (an augmented triad's three notes are equally valid "roots" a
+major third apart; a diminished seventh's four notes likewise a minor third
+apart), so a transcriber's single written root and what the bass actually
+sounds can both be musically correct while disagreeing letter-for-letter;
+`sus` chords are commonly voiced/used as a substitute for a different
+underlying function in practice. This strengthens confidence in the
+classifier for ordinary chord types while flagging these specific harmonic
+categories as inherently hard to validate this way — and worth remembering
+as a genuine limit on how confidently `tonal_conformity` can be trusted for
+sus/augmented/symmetric-diminished chords specifically, not just a
+data-validation footnote. Still not acted on: no code changed as a result,
+pending further investigation (e.g. auditing individual real solos by
+ear/lead-sheet).
+
 Register/phrasing/tension-and-resolution (Phases 22-24) are three pieces of a
 larger "beginner vs advanced" idea from the same listening-test discussion; side-
 slipping and an actual call-site register-narrowing switch (vs. today's single

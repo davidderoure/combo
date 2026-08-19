@@ -455,6 +455,29 @@ the already-fixed `parse_chord` bug, never validated against ground truth;
 `register_usage` is confounded by short per-chunk spans regardless of a
 whole solo's real range. A diagnostic result, not yet acted on.
 
+**Validating chord extraction against an independent signal** (Phase 31,
+`bass_chord_check.py`) narrowed the `tonal_conformity` question without
+fully resolving it. Checking melody notes against the chord would just
+re-measure `tonal_conformity` itself — circular (David's own catch: a poor
+fit could mean a wrong chord label or legitimate outside playing).
+`beats.bass_pitch` — a real per-beat MIDI note recorded independently of
+the chord string, and, per a musicologist David worked with on an earlier
+piano-musicality measure, a genuine signal to listen for — sidesteps that.
+Real result: 42.3% exact root match, 53.7% any-chord-tone match over 28,887
+comparable rows (well above chance, far from clean confirmation); no
+quality-class outlier (40-46% band across all four), arguing against a
+`parse_chord`-style localized bug. But the finer per-raw-chord-string
+breakdown found what the aggregate hid: `sus` chords and augmented chords
+score dramatically worse (`"Bbsus"` 3.4%, `"F+7"` 15.2%), and bare
+diminished triads similarly low (`"Bbo"` 5.6%) — a real, musically-grounded
+explanation, not a bug: augmented and diminished-seventh harmony are
+intervallically *symmetric*, so a transcriber's written root and what the
+bass actually sounds can both be correct while disagreeing letter-for-letter.
+Strengthens confidence in the classifier for ordinary chords while flagging
+sus/augmented/symmetric-diminished as inherently hard to validate this way
+— a real limit on `tonal_conformity`'s trustworthiness for those specific
+categories, not just a data footnote. No code changed as a result.
+
 Register, phrasing, and tension-and-resolution (Phases 22-24) are three pieces
 of a larger "beginner vs advanced" idea from the same listening-test
 discussion; side-slipping and an actual call-site register-narrowing *switch*
@@ -825,7 +848,8 @@ suite is no longer sub-second once torch is imported.
   `tests/test_critic.py`, `tests/test_roles.py`, `tests/test_midi_output.py`,
   `tests/test_rhythm_motifs.py`, `tests/test_wjd_corpus.py`,
   `tests/test_corpus_motifs.py`, `tests/test_critic_baseline.py` — no MIDI
-  hardware needed
+  hardware needed (`test_wjd_corpus.py` also covers Phase 31's
+  `_wjd_expected_bass_pc`)
 - `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
   skips cleanly if they're not present (see Running, below). Three Phase 29
   tests need a second, additional thing — the built WJD corpus cache
@@ -871,6 +895,12 @@ suite is no longer sub-second once torch is imported.
   comparison — see the WJD-critic-baseline paragraph above for the real,
   surprising numbers (`python critic_baseline.py`, `--takes N`, `--wjd-only`,
   `--self-test-only`, `--corpus`, `--credit-resolved-tension`)
+- `bass_chord_check.py` — small runnable analysis script (no MIDI/audio,
+  DESIGN.md §13, Phase 31): validates `wjd_corpus.py`'s chord-root
+  extraction against `beats.bass_pitch` (independent of the chord string),
+  reporting overall/downbeat/quality-class match rates and the worst-
+  matching individual raw chord strings — see the chord-extraction-
+  validation paragraph above for the real numbers (`python bass_chord_check.py`)
 
 ## Running
 
