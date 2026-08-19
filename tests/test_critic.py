@@ -33,6 +33,7 @@ from ensemble.critic import (
     musicality_score,
     phrasing,
     register_usage,
+    register_balance,
     repetition,
     singability,
     tonal_conformity,
@@ -203,12 +204,25 @@ def test_dissonance_scale_major_includes_the_bebop_b6_passing_tone():
     assert plain <= widened
 
 
-def test_dissonance_scale_minor_is_unchanged():
+def test_dissonance_scale_minor_gains_the_chromatic_approach_tone():
+    # Phase 36: minor chords get a single extra pitch class -- a chromatic
+    # approach/leading tone a half-step BELOW the root (interval 11), the
+    # same construction bebop_dom already applies to mixolydian, grounded in
+    # a real, recurring example (pc 1, C#/Db, approaching Dm7's root D).
     plain = scale_pitch_classes(chord_root(D_MINOR), chord_to_mode(D_MINOR))
-    assert dissonance_scale(D_MINOR) == plain
+    widened = dissonance_scale(D_MINOR)
+    approach_pc = (chord_root(D_MINOR) + 11) % 12
+    assert approach_pc == 1  # C#/Db, the real example
+    assert approach_pc not in plain
+    assert widened == plain | {approach_pc}
+    assert plain <= widened  # nothing previously in-scale is lost
 
 
 def test_dissonance_scale_diminished_is_unchanged():
+    # Diminished's own base scale is already far richer than dorian's (8 of
+    # 12 notes, already includes interval 11) -- no comparable gap to close
+    # via Phase 36's minor widening, and the real listening-test evidence
+    # pointed at minor specifically, not diminished.
     plain = scale_pitch_classes(chord_root(G_DIM), chord_to_mode(G_DIM))
     assert dissonance_scale(G_DIM) == plain
 
@@ -219,6 +233,16 @@ def test_dissonance_no_longer_flags_the_bebop_passing_tone_at_all():
     # the widened scale, not flagged as dissonant in the first place.
     notes = notes_from_pitches([65, 64, 65])  # F, E, F -- E approached/left by leap either way is irrelevant now
     assert dissonance(notes, F_DOM) == 0.0
+
+
+def test_dissonance_no_longer_flags_the_minor_chromatic_approach_tone():
+    # Phase 36's real, recurring example: C# (pc 1) approaching Dm7's root D
+    # (pc 2) chromatically from below. E - C# - D: E is a leap down to C#,
+    # C# is a step up to D -- direction changes, so this is deliberately NOT
+    # a passing-tone-exempted shape (Phase 19); the reduction comes purely
+    # from the new always-on minor-chord scale widening.
+    notes = notes_from_pitches([64, 61, 62])  # E, C#, D
+    assert dissonance(notes, D_MINOR) == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -843,6 +867,72 @@ def test_musicality_score_threads_prior_range_into_register_usage():
 
 
 # ---------------------------------------------------------------------------
+# register_balance (Phase 36) -- the DISTRIBUTION counterpart to
+# register_usage's SPAN. REGISTER = (55, 79), width 24, center 67.0.
+# ---------------------------------------------------------------------------
+
+
+def test_register_balance_no_notes_no_prior_is_zero():
+    assert register_balance([], REGISTER) == 0.0
+
+
+def test_register_balance_candidate_mean_at_center_is_one():
+    notes = notes_from_pitches([67, 67])
+    assert register_balance(notes, REGISTER) == pytest.approx(1.0)
+
+
+def test_register_balance_candidate_mean_at_either_extreme_is_zero():
+    assert register_balance(notes_from_pitches([55]), REGISTER) == pytest.approx(0.0)
+    assert register_balance(notes_from_pitches([79]), REGISTER) == pytest.approx(0.0)
+
+
+def test_register_balance_zero_width_register_is_zero():
+    assert register_balance(notes_from_pitches([60, 62]), (60, 60)) == 0.0
+
+
+def test_register_balance_prior_mean_beats_combines_with_the_candidate():
+    # Prior: mean 60.0 over 2 beats (sum=120.0). Candidate: pitch 74, 2 beats
+    # (sum=148.0). Equal weight -> combined mean (120+148)/4 = 67.0 = center.
+    prior_mean_beats = (120.0, 2.0)
+    notes = notes_from_pitches([74], duration_beats=2.0)
+    assert register_balance(notes, REGISTER, prior_mean_beats=prior_mean_beats) == pytest.approx(1.0)
+    # The candidate alone (74, distance 7 from center) is a different, lower score.
+    assert register_balance(notes, REGISTER) == pytest.approx(1.0 - abs(74 - 67) / 12)
+
+
+def test_register_balance_no_candidate_notes_reports_priors_own_mean():
+    # A candidate that contributes nothing new (empty, or entirely out of
+    # register) still gets an honest answer -- prior_mean_beats' own mean,
+    # not forced to 0.0, same honesty convention as register_usage.
+    prior_mean_beats = (120.0, 2.0)  # mean 60.0
+    expected = 1.0 - abs(60.0 - 67.0) / 12
+    assert register_balance([], REGISTER, prior_mean_beats=prior_mean_beats) == pytest.approx(expected)
+    out_of_register = notes_from_pitches([40])
+    assert register_balance(out_of_register, REGISTER, prior_mean_beats=prior_mean_beats) == pytest.approx(expected)
+
+
+def test_register_balance_is_duration_weighted_not_note_count_weighted():
+    # Same pitch SET (the two register extremes), different durations --
+    # proves the mean is weighted by TIME, not by note count.
+    equal_duration = [
+        {"pitch": 55, "duration_beats": 1.0, "velocity_scale": 1.0},
+        {"pitch": 79, "duration_beats": 1.0, "velocity_scale": 1.0},
+    ]
+    unequal_duration = [
+        {"pitch": 55, "duration_beats": 3.0, "velocity_scale": 1.0},
+        {"pitch": 79, "duration_beats": 1.0, "velocity_scale": 1.0},
+    ]
+    assert register_balance(equal_duration, REGISTER) == pytest.approx(1.0)  # mean 67 -- center
+    assert register_balance(unequal_duration, REGISTER) == pytest.approx(0.5)  # mean 61 -- distance 6/12
+
+
+def test_musicality_score_threads_prior_mean_beats_into_register_balance():
+    notes = notes_from_pitches([60, 62])
+    score = musicality_score(notes, C_MAJOR, [], REGISTER, prior_mean_beats=(120.0, 2.0))
+    assert score.register_balance == register_balance(notes, REGISTER, prior_mean_beats=(120.0, 2.0))
+
+
+# ---------------------------------------------------------------------------
 # musicality_score combination
 # ---------------------------------------------------------------------------
 
@@ -860,6 +950,7 @@ def test_musicality_score_overall_is_the_documented_weighted_sum():
         + score.singability * DEFAULT_WEIGHTS["singability"]
         + score.phrasing * DEFAULT_WEIGHTS["phrasing"]
         + score.register_usage * DEFAULT_WEIGHTS["register_usage"]
+        + score.register_balance * DEFAULT_WEIGHTS["register_balance"]
     )
     assert score.overall == pytest.approx(expected_overall)
 

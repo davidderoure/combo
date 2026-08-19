@@ -322,7 +322,7 @@ contrast, ...) stay at their defaults; hidden-state continuity still resets
 **A phrasing/breath metric — "speaking in sentences"** (Phase 23). From the same
 listening test as Phase 22: "the solos are not speaking in 'sentences' with gaps
 in between, which is something that is taught by educators." `phrasing()` is the
-only one of the seven metrics that looks at raw `notes` (including `REST_PITCH`
+only one of the eight metrics that looks at raw `notes` (including `REST_PITCH`
 sentinels) rather than the `_real_notes()`-filtered view every other metric
 uses — `phrase_generator.py`'s own `_inject_rests` already splices genuine rests
 into generated output (bell-curve-weighted toward the phrase midpoint, capped at
@@ -371,7 +371,7 @@ much span is possible. Unlike `phrasing`, this one needed a small, real
 `ensemble/sax.py` change: `musicality_score()` gained a required `register`
 parameter (no sensible default), rippling through all 14 existing call sites —
 expected, mechanical fallout, not a regression. `DEFAULT_WEIGHTS` rebalanced to
-seven keys summing to 1.0.
+seven keys summing to 1.0 (later eight, Phase 36 — see `register_balance` below).
 
 **`register_usage` now rewards excursions across a whole performance, not
 just one chunk's own span** (Phase 32) — the first concrete fix from Phase
@@ -393,6 +393,26 @@ grows within a performance, so once the full register's been explored,
 later chunks can't score higher here regardless of what they do — a
 decaying "recent range" window is a possible future refinement, not
 attempted.
+
+**`register_balance` — a new sibling metric rewarding DISTRIBUTION, not just
+SPAN** (Phase 36). A real listening test — David recorded and sent the MIDI
+from two `self_test.py --corpus` takes — found a precise gap in
+`register_usage`'s own fix: real analysis of the recording (parsed with
+`mido`, converted through each chart's real generation tempo) showed both
+takes touched the full register span early, then sat with pitch mean/median
+near the *bottom* of `SAX_REGISTER` (mean 60.4/58.6 against a midpoint of
+67) for the entire performance, with no progressive drift — `prior_range`
+only ever grows a min/max envelope, so once the boundary's touched once,
+nothing pulls a voice back toward spending *time* away from a low comfort
+zone. `register_balance(notes, register, prior_mean_beats)` measures the
+DURATION-weighted mean pitch (this voice's `prior_mean_beats`, tracked as
+`own_pitch_weighted` closure state, combined with the candidate's own
+in-register notes), scored by closeness to the register's midpoint. A new,
+separate `DEFAULT_WEIGHTS` key (`0.15`) — `register_usage` and
+`register_balance` are genuinely different axes, both kept. Real, measured:
+`register_usage` averages **0.9075** (span is cheap) while `register_balance`
+averages **0.4499** — a real gap between "touched the edges" and "spends
+time using the whole range," confirming the listening-test diagnosis.
 
 **`repetition`'s weight is negative now, not just retuned** (Phase 33). The
 literal reading of "reweight using the real WJD number" — just increase the
@@ -812,6 +832,30 @@ from the same discussion, deliberately not attempted here: register range as
 a skill-level control (a call-site choice, not a code change — `register` is
 already a real parameter) and phrasing/"speaking in sentences" with gaps
 (a different critic dimension entirely).
+
+**Minor chords get their own always-on scale widening too** (Phase 36) —
+closing Phase 20's own named scope-cut ("minor and diminished... a named
+scope-cut, not an oversight"). The same real listening-test MIDI analysis
+that motivated `register_balance` found residual dissonance concentrated
+specifically on minor chords (5.2% of notes over minor chords vs. 1.1-1.2%
+over major/dominant, recomputed against the exact real selection gate), with
+a concrete recurring example: a chromatic approach tone (pitch class 1,
+C#/Db) into Dm7's root D, three separate times. `ensemble/wolfson/scales.py`
+(ported, never edited) has no minor-quality entry comparable to
+`bebop_major`/`bebop_dom`, so rather than inventing a new `MODES` key,
+`_widened_mode_scale` unions a single extra pitch class for dorian chords
+directly — a chromatic leading tone a half-step *below* the root (interval
+11), the exact same construction `bebop_dom` already applies to mixolydian,
+just applied to dorian. Diminished stays untouched: its own base scale
+already includes interval 11 and is far richer than dorian's, and the real
+evidence pointed at minor specifically. Verified two ways:
+`out_of_key_check.py --chart songs/ii_v_i.chart` no longer flags a
+minor-chord chromatic-approach note at all (the tool already used
+`dissonance_scale`, Phase 20's own precedent, so this is picked up
+automatically); a real selection-behaviour integration test (spy-and-recompute
+over real generated candidates on a genuine Dm7 bar) confirms the widening
+genuinely differs from the old scale for at least one real candidate, never
+scoring worse.
 
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built

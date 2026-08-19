@@ -126,6 +126,13 @@ DEFAULT_WEIGHTS = {
     "singability": 0.15,
     "phrasing": 0.15,
     "register_usage": 0.2,
+    # Phase 36 -- a new placeholder weight, same honest not-yet-tuned status as
+    # every other weight here. register_usage (span) and register_balance
+    # (distribution) are genuinely different signals, both worth keeping --
+    # this doesn't steal from register_usage's own weight. Weights already
+    # don't sum to 1.0 (never a strict invariant, per Phase 33's own note);
+    # this just adds one more term.
+    "register_balance": 0.15,
 }
 
 
@@ -223,6 +230,30 @@ def _semitones_to_scale(pitch_class: int, scale: frozenset) -> int:
 
 
 _RICHER_MODE_FOR = {"ionian": "bebop_major", "mixolydian": "bebop_dom"}
+_MINOR_APPROACH_TONE_INTERVAL = 11  # semitones above root -- a chromatic
+                                       # leading/approach tone a half-step BELOW
+                                       # the root (mod 12); the identical
+                                       # construction bebop_dom already applies
+                                       # to mixolydian (mixolydian + interval 11),
+                                       # applied here to dorian instead (Phase
+                                       # 36). Grounded in a real, recurring
+                                       # example from a listening-test MIDI
+                                       # analysis: a chromatic approach tone
+                                       # (pc 1, C#/Db) into Dm7's root D, found
+                                       # three times. Minor has no comparably-
+                                       # named MODES entry to look up the way
+                                       # ionian/mixolydian do (Phase 20's own
+                                       # named scope-cut) -- implemented as a
+                                       # single pitch-class union instead, the
+                                       # same pattern dissonance_scale already
+                                       # uses for the dominant tritone-sub
+                                       # color tone below, not a new mechanism.
+                                       # Diminished is deliberately left alone:
+                                       # its own base scale ([0,2,3,5,6,8,9,11])
+                                       # already includes interval 11 and is far
+                                       # richer than dorian's 7 notes, and the
+                                       # real listening-test evidence pointed at
+                                       # minor specifically, not diminished.
 
 
 def _widened_mode_scale(chord_idx: int) -> frozenset:
@@ -231,17 +262,26 @@ def _widened_mode_scale(chord_idx: int) -> frozenset:
     in-scale is lost, only real, named tensions gain tolerance) rather than
     replacing it -- e.g. mixolydian -> mixolydian | bebop_dom, recognising
     the maj7-as-passing-tone vocabulary over a dominant chord (the original
-    "E natural over F7" example that started this). Minor and diminished
-    have no comparably-named richer variant in ensemble/wolfson/scales.py's
-    MODES table -- not invented, a named scope-cut, not an oversight.
-    Factored out from dissonance_scale (Phase 21) so the tritone/b5
-    substitution term below can be layered on top without recursing into
-    itself."""
+    "E natural over F7" example that started this). Diminished has no
+    comparably-named richer variant in ensemble/wolfson/scales.py's MODES
+    table -- not invented, a named scope-cut, not an oversight (see
+    _MINOR_APPROACH_TONE_INTERVAL's own comment for why diminished stays
+    untouched). Minor (dorian) gets a single extra chromatic approach-tone
+    pitch class instead of a whole named scale (Phase 36) -- ported
+    ensemble/wolfson/scales.py can't be edited to add a new MODES key, and
+    real listening-test evidence pointed at a specific, single recurring
+    color tone, not a whole richer scale. Factored out from dissonance_scale
+    (Phase 21) so the tritone/b5 substitution term below can be layered on
+    top without recursing into itself."""
     root = chord_root(chord_idx)
     mode = chord_to_mode(chord_idx)
     scale = scale_pitch_classes(root, mode)
     richer = _RICHER_MODE_FOR.get(mode)
-    return scale | scale_pitch_classes(root, richer) if richer else scale
+    if richer:
+        return scale | scale_pitch_classes(root, richer)
+    if mode == "dorian":
+        return scale | {(root + _MINOR_APPROACH_TONE_INTERVAL) % 12}
+    return scale
 
 
 def dissonance_scale(chord_idx: int) -> frozenset:
@@ -679,6 +719,62 @@ def register_usage(notes: list, register: Tuple[int, int], prior_range: Optional
     return (combined_high - combined_low) / width
 
 
+def register_balance(
+    notes: list, register: Tuple[int, int], prior_mean_beats: Optional[Tuple[float, float]] = None
+) -> float:
+    """How close this voice's CUMULATIVE, duration-weighted mean pitch sits to
+    register's own midpoint -- the DISTRIBUTION counterpart to register_usage's
+    SPAN (Phase 36). register_usage rewards having touched the register's
+    boundary at least once; nothing in it then pulls a voice back toward
+    spending TIME away from wherever it's been sitting -- this is that missing
+    pressure.
+
+    Found necessary by a real listening-test MIDI analysis: register
+    mean/median sat near the BOTTOM of SAX_REGISTER for two entire real
+    recorded performances (blues_in_f.chart and songs/ii_v_i.chart) despite
+    the full span being touched early, with no progressive drift across the
+    performance -- span alone was cheaply satisfied once and never revisited.
+
+    Duration-weighted, not note-count-weighted: a long held note should count
+    for more than a quick passing one, matching how a listener actually
+    perceives "where the solo is sitting".
+
+    prior_mean_beats, if given: (weighted_pitch_sum, total_beats) already
+    accumulated by THIS voice earlier this performance (ensemble/sax.py
+    tracks this across chunk-builds, mirroring register_usage's own
+    prior_range -- Phase 32). Combined with this candidate's own in-register
+    notes before computing the mean. None (every pre-Phase-36 caller and any
+    bar-0 call) means only this candidate's own short chunk is judged -- a
+    weak, noisy signal alone; the real, intended use is always with a real
+    prior_mean_beats once a performance is under way.
+
+    Measured over IN-REGISTER real notes only, same reasoning as
+    register_usage (candidate_notes are the model's raw output before
+    out-of-register pitches get clipped at playback).
+
+    No in-register notes and no prior_mean_beats -> 0.0. No in-register
+    candidate notes but a real prior_mean_beats -> scores prior_mean_beats'
+    own mean unchanged -- "contributed nothing new" is a real answer, not
+    forced to 0.0, same honesty convention as register_usage."""
+    low, high = register
+    width = high - low
+    if width <= 0:
+        return 0.0
+    center = (low + high) / 2.0
+    in_register = [n for n in _real_notes(notes) if low <= n["pitch"] <= high]
+    candidate_sum = sum(n["pitch"] * n["duration_beats"] for n in in_register)
+    candidate_beats = sum(n["duration_beats"] for n in in_register)
+    if prior_mean_beats is not None:
+        prior_sum, prior_beats = prior_mean_beats
+        combined_sum, combined_beats = prior_sum + candidate_sum, prior_beats + candidate_beats
+    else:
+        combined_sum, combined_beats = candidate_sum, candidate_beats
+    if combined_beats <= 0:
+        return 0.0
+    combined_mean = combined_sum / combined_beats
+    return max(0.0, 1.0 - abs(combined_mean - center) / (width / 2.0))
+
+
 @dataclass(frozen=True)
 class MusicalityScore:
     tonal_conformity: float
@@ -688,13 +784,14 @@ class MusicalityScore:
     singability: float
     phrasing: float
     register_usage: float
+    register_balance: float
     overall: float
 
 
 def musicality_score(
     notes: list, chord_idx: int, seed_phrase: list, register: Tuple[int, int], weights: dict = None,
     extra_tolerated: frozenset = frozenset(), credit_resolved_tension: bool = False, modal: bool = False,
-    prior_range: Optional[Tuple[int, int]] = None,
+    prior_range: Optional[Tuple[int, int]] = None, prior_mean_beats: Optional[Tuple[float, float]] = None,
 ) -> MusicalityScore:
     """weights, if given, overrides DEFAULT_WEIGHTS for the overall combination
     only -- every sub-score is still computed and reported regardless (a metric
@@ -715,8 +812,9 @@ def musicality_score(
     modal (Phase 27): passed straight through to contour_smoothness, matching
     whichever modal_strength was used for this same candidate's generation.
     prior_range (Phase 32): passed straight through to register_usage -- see
-    its own docstring. All four default to their respective pre-existing
-    behaviour."""
+    its own docstring. prior_mean_beats (Phase 36): passed straight through to
+    register_balance -- see its own docstring. All five default to their
+    respective pre-existing behaviour."""
     weights = weights if weights is not None else DEFAULT_WEIGHTS
     scores = {
         "tonal_conformity": tonal_conformity(notes, chord_idx, extra_tolerated, credit_resolved_tension),
@@ -726,6 +824,7 @@ def musicality_score(
         "singability": singability(notes),
         "phrasing": phrasing(notes),
         "register_usage": register_usage(notes, register, prior_range),
+        "register_balance": register_balance(notes, register, prior_mean_beats),
     }
     overall = sum(scores[key] * weights.get(key, 0.0) for key in scores)
     return MusicalityScore(overall=overall, **scores)

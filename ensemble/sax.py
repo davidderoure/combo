@@ -499,6 +499,9 @@ def sax_generator(
     own_pitch_range = {"low": None, "high": None}  # Phase 32 -- this voice's own real pitch
                                                       # bounds explored so far THIS performance,
                                                       # fed into register_usage as prior_range
+    own_pitch_weighted = {"sum": 0.0, "beats": 0.0}  # Phase 36 -- duration-weighted pitch
+                                                        # accumulator, fed into register_balance
+                                                        # as prior_mean_beats
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
         if director_signal.gesture is not None and director_signal.gesture.name == "toggle_singability":
@@ -538,6 +541,12 @@ def sax_generator(
             prior_range = (
                 (own_pitch_range["low"], own_pitch_range["high"]) if own_pitch_range["low"] is not None else None
             )
+            # Phase 36: mirrors prior_range immediately above, for
+            # register_balance instead of register_usage -- None until the
+            # first chunk's winner is chosen below.
+            prior_mean_beats = (
+                (own_pitch_weighted["sum"], own_pitch_weighted["beats"]) if own_pitch_weighted["beats"] > 0 else None
+            )
 
             best_notes = None
             best_score = None
@@ -557,7 +566,7 @@ def sax_generator(
                 candidate_score = musicality_score(
                     candidate_notes, chord_idx, seed_phrase, register, weights=critic_weights,
                     extra_tolerated=functional_scale, credit_resolved_tension=credit_resolved_tension,
-                    modal=song.modal, prior_range=prior_range,
+                    modal=song.modal, prior_range=prior_range, prior_mean_beats=prior_mean_beats,
                 )
                 candidate_scores.append(candidate_score.overall)
                 # (-dissonance, adherence, corpus_score, overall) lexicographic
@@ -601,13 +610,16 @@ def sax_generator(
             generate.motif_adherence_log.append(best_key[1])
             generate.winning_score_log.append(best_score)
 
-            winner_real_pitches = [
-                n["pitch"] for n in notes if n["pitch"] != REST_PITCH and register[0] <= n["pitch"] <= register[1]
+            winner_real_in_register = [
+                n for n in notes if n["pitch"] != REST_PITCH and register[0] <= n["pitch"] <= register[1]
             ]
-            if winner_real_pitches:
+            if winner_real_in_register:
+                winner_real_pitches = [n["pitch"] for n in winner_real_in_register]
                 lo, hi = min(winner_real_pitches), max(winner_real_pitches)
                 own_pitch_range["low"] = lo if own_pitch_range["low"] is None else min(own_pitch_range["low"], lo)
                 own_pitch_range["high"] = hi if own_pitch_range["high"] is None else max(own_pitch_range["high"], hi)
+                own_pitch_weighted["sum"] += sum(n["pitch"] * n["duration_beats"] for n in winner_real_in_register)
+                own_pitch_weighted["beats"] += sum(n["duration_beats"] for n in winner_real_in_register)
 
             if memory is not None:
                 memory.store(notes, score=best_score.overall, chord_quality=chord_quality)
@@ -631,4 +643,5 @@ def sax_generator(
                                        # for critic_baseline.py's real-vs-WJD comparison.
     generate.own_pitch_range = own_pitch_range  # exposed for testing (Phase 32) -- same "expose the
                                                   # mutable dict directly" convention as dissonance_mode
+    generate.own_pitch_weighted = own_pitch_weighted  # exposed for testing (Phase 36) -- same convention
     return generate

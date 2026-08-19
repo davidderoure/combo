@@ -58,6 +58,20 @@ def _dispensed_pitch_range(timeline, voice_id: str, until_beat: float):
     return (min(pitches), max(pitches)) if pitches else None
 
 
+def _dispensed_pitch_mean_beats(timeline, voice_id: str, until_beat: float):
+    """Phase 36: the real (weighted_pitch_sum, total_beats) a voice actually
+    dispensed strictly before until_beat -- used to recompute the real
+    prior_mean_beats a later chunk's candidates were scored against, the same
+    value ensemble/sax.py's own_pitch_weighted tracks internally. None if
+    nothing was dispensed yet (mirrors register_balance's own
+    prior_mean_beats=None case), same style as _dispensed_pitch_range above."""
+    events = [e for e in timeline if e.voice_id == voice_id and e.start_beat < until_beat]
+    total_beats = sum(e.duration_beats for e in events)
+    if total_beats <= 0:
+        return None
+    return (sum(e.pitch * e.duration_beats for e in events), total_beats)
+
+
 def make_session(seed: int, director: Director = None) -> Session:
     bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
     sax = Voice(
@@ -320,9 +334,10 @@ def test_search_picks_the_actual_highest_scoring_candidate():
     # chunk's data. Use the last 5 calls to match what's actually still exposed.
     second_chunk_start = 4 * BEATS_PER_BAR  # DEFAULT_PLAN_BARS=4 -> chunk 2 starts at bar 4
     prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
+    prior_mean_beats = _dispensed_pitch_mean_beats(timeline, "sax", second_chunk_start)  # Phase 36
     last_chunk = candidates[-5:]
     recomputed_scores = [
-        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range).overall
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range, prior_mean_beats=prior_mean_beats).overall
         for seed_phrase, kwargs, notes in last_chunk
     ]
     assert recomputed_scores == sax_gen.last_candidate_scores
@@ -380,9 +395,10 @@ def test_phrasing_varies_across_real_candidates_and_reaches_selection():
 
     second_chunk_start = 4 * BEATS_PER_BAR
     prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
+    prior_mean_beats = _dispensed_pitch_mean_beats(timeline, "sax", second_chunk_start)  # Phase 36
     last_chunk = candidates[-8:]
     scored = [
-        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range)
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range, prior_mean_beats=prior_mean_beats)
         for seed_phrase, kwargs, notes in last_chunk
     ]
 
@@ -437,9 +453,10 @@ def test_register_usage_varies_across_real_candidates_and_reaches_selection():
 
     second_chunk_start = 4 * BEATS_PER_BAR
     prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
+    prior_mean_beats = _dispensed_pitch_mean_beats(timeline, "sax", second_chunk_start)  # Phase 36
     last_chunk = candidates[-8:]
     scored = [
-        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range)
+        musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range, prior_mean_beats=prior_mean_beats)
         for seed_phrase, kwargs, notes in last_chunk
     ]
 
@@ -594,11 +611,12 @@ def test_search_with_a_motif_target_prefers_higher_adherence_over_higher_overall
 
     second_chunk_start = 4 * BEATS_PER_BAR
     prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
+    prior_mean_beats = _dispensed_pitch_mean_beats(timeline, "sax", second_chunk_start)  # Phase 36
     recomputed = [
         (
             -dissonance(notes, kwargs["chord_idx"]),
             motif_adherence(notes, motif_targets),
-            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range).overall,
+            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range, prior_mean_beats=prior_mean_beats).overall,
         )
         for seed_phrase, kwargs, notes in last_chunk
     ]
@@ -757,10 +775,11 @@ def test_dissonance_mode_disabled_reverts_to_overall_only_selection():
 
     second_chunk_start = 4 * BEATS_PER_BAR
     prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
+    prior_mean_beats = _dispensed_pitch_mean_beats(timeline, "sax", second_chunk_start)  # Phase 36
     overall_only = [
         (
             motif_adherence(notes, []),
-            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range).overall,
+            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER, prior_range=prior_range, prior_mean_beats=prior_mean_beats).overall,
         )
         for seed_phrase, kwargs, notes in last_chunk
     ]
@@ -818,11 +837,16 @@ def test_credit_resolved_tension_reaches_real_selection():
     second_chunk_start = 4 * BEATS_PER_BAR
     functional_scale = _functional_tonic_scale(song, second_chunk_start)
     assert functional_scale == frozenset()  # one chord the whole song -- no ii-V-I context here
+    prior_range = _dispensed_pitch_range(timeline, "sax", second_chunk_start)  # Phase 32
+    prior_mean_beats = _dispensed_pitch_mean_beats(timeline, "sax", second_chunk_start)  # Phase 36
 
     recomputed = [
         (
             -dissonance(notes, kwargs["chord_idx"], extra_tolerated=functional_scale, credit_resolved_tension=True),
-            musicality_score(notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER).overall,
+            musicality_score(
+                notes, kwargs["chord_idx"], seed_phrase, SAX_REGISTER,
+                prior_range=prior_range, prior_mean_beats=prior_mean_beats,
+            ).overall,
         )
         for seed_phrase, kwargs, notes in last_chunk
     ]
@@ -861,14 +885,23 @@ def build_ii_v_i_song() -> Song:
 
 def test_functional_context_reaches_real_selection_over_the_ii_chord():
     """Phase 21, Lever E: a real, non-trivial extra tolerance is added at the
-    ii chord (checked directly: functional_scale is a STRICT superset of
-    dissonance_scale(Dm7's own chord_idx) alone -- D-dorian is missing
-    exactly the b6 pc 8 that C-major-widened has, matching the hand
+    ii chord (checked directly: functional_scale adds exactly the b6 pc 8
+    that C-major-widened has and D-dorian-widened doesn't, matching the hand
     computation in dissonance_scale's own docstring), and the actual
     dispensed candidate is the one selection -- using functional context --
     actually picks, verified by recomputing the exact same key sax_generator
     uses, not trusting its own bookkeeping (the Phase 8 postmortem's lesson,
-    applied again here)."""
+    applied again here).
+
+    Note (Phase 36): functional_scale is no longer a STRICT SUPERSET of
+    dissonance_scale(dm7_idx) alone -- Phase 36 gave minor chords their own
+    always-on extra pitch class (pc 1, a chromatic approach tone into the
+    root) that functional_scale (built from the I chord's own widened scale,
+    Cmaj7, which has no reason to include a tone specific to D-dorian) never
+    had. The set-DIFFERENCE check below is what actually matters for this
+    test's claim (a real, non-trivial NEW tolerance from functional context)
+    and is unaffected by that -- pc 8 was never in D-dorian's scale, widened
+    or not, so it stays a genuine, functional-context-only addition."""
     from ensemble.critic import dissonance, dissonance_scale as critic_dissonance_scale, motif_adherence, musicality_score
     from ensemble.sax import _functional_tonic_scale, chord_to_wolfson_index
 
@@ -877,7 +910,6 @@ def test_functional_context_reaches_real_selection_over_the_ii_chord():
     functional_scale = _functional_tonic_scale(song, 0.0)
 
     # The real, non-trivial extra tolerance this phase claims to add.
-    assert functional_scale > critic_dissonance_scale(dm7_idx)
     assert functional_scale - critic_dissonance_scale(dm7_idx) == {8}  # the b6, Ab
 
     original = wolfson_phrase_generator.PhraseGenerator.generate
@@ -919,6 +951,74 @@ def test_functional_context_reaches_real_selection_over_the_ii_chord():
         if e.voice_id == "sax" and 0.0 <= e.start_beat < BEATS_PER_BAR
     )
     assert set(dispensed_pitches).issubset(set(winner_pitches))
+
+
+def test_minor_chromatic_approach_tone_reaches_real_selection_over_dm7():
+    """Phase 36: real proof the minor-chord scale widening (a chromatic
+    approach tone into the root -- pc 1 for Dm7, see _widened_mode_scale's
+    own docstring) isn't a no-op on real generated data, mirroring
+    test_credit_resolved_tension_reaches_real_selection's own "genuinely
+    differs for at least one real candidate" structure. There's no public
+    on/off toggle for this lever (unlike credit_resolved_tension), so this
+    reimplements dissonance()'s exact clash-counting loop -- reusing its own
+    private helpers directly, not reinventing them -- against the OLD,
+    pre-Phase-36 scale reference (plain dorian, no pc 1) to compute what
+    dissonance WOULD have reported for each real candidate, then compares
+    against the real, current dissonance()."""
+    from ensemble.critic import (
+        DISSONANT_SEMITONE_DISTANCE, _is_passing_tone, _real_notes, _semitones_to_scale,
+        chord_root, chord_to_mode, dissonance, dissonance_scale as critic_dissonance_scale, scale_pitch_classes,
+    )
+    from ensemble.sax import chord_to_wolfson_index
+
+    def old_style_dissonance(notes, plain_scale):
+        real = _real_notes(notes)
+        if not real:
+            return 0.0
+        clashes = 0
+        for i, n in enumerate(real):
+            pc = n["pitch"] % 12
+            if pc in plain_scale:
+                continue
+            if _semitones_to_scale(pc, plain_scale) != DISSONANT_SEMITONE_DISTANCE:
+                continue
+            if _is_passing_tone(real, i):
+                continue
+            clashes += 1
+        return clashes / len(real)
+
+    song = build_ii_v_i_song()
+    dm7_idx = chord_to_wolfson_index(Chord.parse("Dm7"))
+    plain_dorian = scale_pitch_classes(chord_root(dm7_idx), chord_to_mode(dm7_idx))
+    assert 1 not in plain_dorian
+    assert 1 in critic_dissonance_scale(dm7_idx)  # the real, active new tolerance
+
+    original = wolfson_phrase_generator.PhraseGenerator.generate
+    candidates = []
+
+    def recording_generate(self, seed_phrase, **kwargs):
+        notes = original(self, seed_phrase, **kwargs)
+        candidates.append((seed_phrase, kwargs, notes))
+        return notes
+
+    wolfson_phrase_generator.PhraseGenerator.generate = recording_generate
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, seed=11)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        Session(song=song, voices=[bass, sax]).generate()
+    finally:
+        wolfson_phrase_generator.PhraseGenerator.generate = original
+
+    dm7_bar_candidates = [notes for _sp, kwargs, notes in candidates if kwargs["chord_idx"] == dm7_idx]
+    assert dm7_bar_candidates  # a real, non-empty batch over the Dm7 bar
+
+    new_scores = [dissonance(notes, dm7_idx) for notes in dm7_bar_candidates]
+    old_scores = [old_style_dissonance(notes, plain_dorian) for notes in dm7_bar_candidates]
+    # Genuinely differs for at least one real candidate -- proof the widening
+    # isn't a no-op on real generated data.
+    assert any(new < old for new, old in zip(new_scores, old_scores))
+    assert all(new <= old for new, old in zip(new_scores, old_scores))  # never worse under the new scale
 
 
 def test_chord_tagged_recall_reaches_real_selection_over_a_multi_quality_chart():
@@ -1408,3 +1508,51 @@ def test_prior_range_reaches_real_selection_on_the_second_chunk():
 
     all_sax_pitches = [e.pitch for e in timeline if e.voice_id == "sax"]
     assert sax_gen.own_pitch_range == {"low": min(all_sax_pitches), "high": max(all_sax_pitches)}
+
+
+def test_prior_mean_beats_reaches_real_selection_on_the_second_chunk():
+    """Phase 36: the register_balance counterpart to
+    test_prior_range_reaches_real_selection_on_the_second_chunk above --
+    build_slow_song() always produces exactly 2 chunks; chunk 1 has no prior
+    mean yet (own_pitch_weighted starts empty), chunk 2 should be scored with
+    prior_mean_beats equal to chunk 1's own real dispensed, duration-weighted
+    pitch mean. Same spy-on-ensemble.sax's-own-bound-name technique."""
+    import ensemble.sax as sax_module
+
+    original_score = sax_module.musicality_score
+    calls = []  # (register, prior_mean_beats) per musicality_score call
+
+    def score_wrapper(notes, chord_idx, seed_phrase, register, **kwargs):
+        calls.append((register, kwargs.get("prior_mean_beats")))
+        return original_score(notes, chord_idx, seed_phrase, register, **kwargs)
+
+    sax_module.musicality_score = score_wrapper
+    try:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=3, seed=5)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=build_slow_song(), voices=[bass, sax]).generate()
+    finally:
+        sax_module.musicality_score = original_score
+
+    assert len(calls) == 6  # 3 candidates x 2 chunks
+
+    first_chunk_calls = calls[:3]
+    second_chunk_calls = calls[3:]
+    assert all(prior_mean_beats is None for _reg, prior_mean_beats in first_chunk_calls)
+
+    second_chunk_start = 4 * BEATS_PER_BAR
+    chunk1_events = [
+        e for e in timeline
+        if e.voice_id == "sax" and 0.0 <= e.start_beat < second_chunk_start
+    ]
+    assert chunk1_events  # a real, non-empty dispensed chunk
+    expected_sum = sum(e.pitch * e.duration_beats for e in chunk1_events)
+    expected_beats = sum(e.duration_beats for e in chunk1_events)
+    for _reg, prior_mean_beats in second_chunk_calls:
+        assert prior_mean_beats[0] == pytest.approx(expected_sum)
+        assert prior_mean_beats[1] == pytest.approx(expected_beats)
+
+    all_sax_events = [e for e in timeline if e.voice_id == "sax"]
+    assert sax_gen.own_pitch_weighted["sum"] == pytest.approx(sum(e.pitch * e.duration_beats for e in all_sax_events))
+    assert sax_gen.own_pitch_weighted["beats"] == pytest.approx(sum(e.duration_beats for e in all_sax_events))
