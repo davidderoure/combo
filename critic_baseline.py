@@ -15,6 +15,19 @@ takes)?
     python critic_baseline.py --corpus                 # combo takes also use corpus_familiarity,
                                                           # mirroring self_test.py's own flag
     python critic_baseline.py --credit-resolved-tension
+    python critic_baseline.py --markov                  # also run N takes through
+                                                          # ensemble/markov_sax.py's Markov-chain
+                                                          # generator (Phase 35), needs
+                                                          # `python markov_corpus.py --build` first
+
+--markov adds a THIRD column: WJD (real) / combo (LSTM) / markov. Both
+combo generators are scored the SAME way -- winning_score_log, n_candidates=8,
+blues_in_f.chart by default -- so the comparison isolates the generation
+mechanism, not search depth or chart. Prompted by the WJD-in/WJD-out
+reflection: an LSTM and a Markov chain are both short-context local
+generators, so comparing them under the identical critic tests whether
+combo's elevated `repetition` (Phase 34) is neural-sampling-specific or more
+general to local generation.
 
 Chunking uses Phase 30's new wjd_corpus.iter_solos_with_chord_idx/
 split_into_chord_runs -- full chord_idx (root+quality), not Phase 29's
@@ -64,11 +77,14 @@ from dataclasses import fields
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+import markov_corpus
 import self_test as st
 import wjd_corpus
 from ensemble import MACHINE_SPEED, Session, Voice
 from ensemble.corpus_motifs import CorpusMotifs
 from ensemble.critic import MIN_BREATH_BEATS, MusicalityScore, musicality_score, register_usage
+from ensemble.markov_sax import markov_sax_generator
+from ensemble.markov_tables import MarkovTables
 from ensemble.memory import RehearsalMemory
 from ensemble.sax import sax_generator
 from ensemble.wolfson.encoding import PITCH_MAX, PITCH_MIN
@@ -145,6 +161,27 @@ def score_combo_takes(
     return scores
 
 
+def score_markov_takes(chart_path: Path, n_takes: int, tables: MarkovTables, order: int) -> List[MusicalityScore]:
+    """Same shape as score_combo_takes -- n_candidates=8 (matching the LSTM
+    side's search depth), no explicit seed (matching score_combo_takes'
+    own unseeded, naturally-varying takes) -- so the two are directly
+    comparable, isolating the generation mechanism itself."""
+    song = parse_chart(chart_path.read_text())
+    scores: List[MusicalityScore] = []
+    for _ in range(n_takes):
+        bass = Voice(
+            id="bass", instrument="bass", register=st.BASS_REGISTER, source="ai",
+            generator=st.walking_bass_stub(st.BASS_REGISTER),
+        )
+        sax_gen = markov_sax_generator(
+            st.SAX_REGISTER, target_voice_id="bass", tables=tables, order=order, n_candidates=8,
+        )
+        sax = Voice(id="sax", instrument="sax", register=st.SAX_REGISTER, source="ai", generator=sax_gen)
+        Session(song=song, voices=[bass, sax]).generate(mode=MACHINE_SPEED)
+        scores.extend(sax_gen.winning_score_log)
+    return scores
+
+
 def summarize(scores: List[MusicalityScore]) -> dict:
     if not scores:
         return {name: float("nan") for name in SCORE_METRICS}
@@ -152,13 +189,23 @@ def summarize(scores: List[MusicalityScore]) -> dict:
 
 
 def print_comparison(
-    wjd_summary: Optional[dict], combo_summary: Optional[dict], wjd_wide_register: Optional[float]
+    wjd_summary: Optional[dict],
+    combo_summary: Optional[dict],
+    wjd_wide_register: Optional[float],
+    markov_summary: Optional[dict] = None,
 ) -> None:
-    print(f"\n{'metric':24s} {'WJD (real)':>12s} {'combo':>12s}")
+    header = f"\n{'metric':24s} {'WJD (real)':>12s} {'combo':>12s}"
+    if markov_summary is not None:
+        header += f" {'markov':>12s}"
+    print(header)
     for name in SCORE_METRICS:
         wjd_v = f"{wjd_summary[name]:.4f}" if wjd_summary is not None else "n/a"
         combo_v = f"{combo_summary[name]:.4f}" if combo_summary is not None else "n/a"
-        print(f"{name:24s} {wjd_v:>12s} {combo_v:>12s}")
+        line = f"{name:24s} {wjd_v:>12s} {combo_v:>12s}"
+        if markov_summary is not None:
+            markov_v = f"{markov_summary[name]:.4f}"
+            line += f" {markov_v:>12s}"
+        print(line)
     if wjd_summary is not None:
         print(f"\nregister_usage under combo's own SAX_REGISTER {st.SAX_REGISTER}: WJD={wjd_summary['register_usage']:.4f}")
     if wjd_wide_register is not None:
@@ -175,6 +222,11 @@ def main() -> None:
     parser.add_argument("--corpus", action="store_true",
                          help="Combo takes also use corpus_familiarity, mirroring self_test.py's own flag.")
     parser.add_argument("--credit-resolved-tension", action="store_true")
+    parser.add_argument("--markov", action="store_true",
+                         help="Also run --takes takes through ensemble/markov_sax.py's Markov-chain "
+                              "generator (Phase 35), added as a third comparison column. Needs "
+                              "'python markov_corpus.py --build' first.")
+    parser.add_argument("--markov-order", type=int, default=markov_corpus.DEFAULT_ORDER)
     args = parser.parse_args()
 
     wjd_summary = None
@@ -206,7 +258,20 @@ def main() -> None:
         combo_summary = summarize(combo_scores)
         print(f"  {len(combo_scores)} real chunks scored across {args.takes} takes in {elapsed:.2f}s")
 
-    print_comparison(wjd_summary, combo_summary, wjd_wide_register)
+    markov_summary = None
+    if args.markov:
+        if not markov_corpus.CACHE_PATH.exists():
+            print(f"{markov_corpus.CACHE_PATH} not found -- run 'python markov_corpus.py --build' first. Skipping --markov.")
+        else:
+            tables = MarkovTables(markov_corpus.CACHE_PATH)
+            print(f"Running {args.takes} markov self-test takes (order={args.markov_order})...")
+            start = time.perf_counter()
+            markov_scores = score_markov_takes(args.chart, args.takes, tables, args.markov_order)
+            elapsed = time.perf_counter() - start
+            markov_summary = summarize(markov_scores)
+            print(f"  {len(markov_scores)} real chunks scored across {args.takes} takes in {elapsed:.2f}s")
+
+    print_comparison(wjd_summary, combo_summary, wjd_wide_register, markov_summary)
 
 
 if __name__ == "__main__":

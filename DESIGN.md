@@ -231,6 +231,55 @@ match) — worth revisiting if a future listening test suggests otherwise.
 constants) are removed, genuinely dead — checked directly, nothing else
 depended on them.
 
+**A Markov-chain sax generator, sharing the LSTM's real critic and search
+(Phase 35) — a genuine second data point on the `repetition` question.**
+Prompted by reflecting on the WJD-in/WJD-out shape of this whole evaluation
+loop: since `ensemble/critic.py` was built (Phase 12) as a pure function
+over note dicts, never on anything LSTM-specific, the `n_candidates`
+search-and-select architecture isn't actually tied to the LSTM — a
+different local generator can plug into the exact same critic and
+selection key. `ensemble/markov_sax.py`'s `markov_sax_generator` does
+exactly that, reusing `ensemble/sax.py`'s generation-mechanism-agnostic
+pieces directly (`chord_to_wolfson_index`, `_build_seed_phrase`,
+`_bars_until_chord_change`, `_split_phrase_into_bars` — none LSTM-specific,
+checked directly) and `ensemble/critic.py`'s `musicality_score`/`dissonance`/
+`motif_adherence` for the identical `(-dissonance, motif_adherence,
+overall)` selection key. New `markov_corpus.py` builds quality-conditioned
+order-1 transition tables (pitch-interval and duration-token, two
+INDEPENDENT chains) from the real WJD corpus, reusing `wjd_corpus.iter_solos`/
+`split_into_quality_runs` directly. Order chosen empirically, not guessed:
+order-1 gives 42-67 well-populated contexts per quality (15-26% singleton
+rate); order-2 jumps to 300-903 contexts with 29-38% singleton — a real
+sparsity problem, since a singleton context just replays its one training
+example verbatim, making a higher-order chain *more* mechanical, not less.
+
+Real result (`critic_baseline.py --markov`, 20 takes each, `blues_in_f.chart`):
+`repetition` — WJD **0.147**, combo (LSTM) **0.296**, markov **0.269** — the
+Markov chain, a completely different generation mechanism with no neural
+sampling at all, shows repetition much closer to the LSTM than to WJD. That's
+real evidence the elevated repetition isn't neural-sampling-specific — it
+looks like a more general property of short-context local generation
+(consistent with the earlier finding that raising the LSTM's sampling
+temperature didn't move `repetition` either). A second, unplanned but
+informative result: `singability` — WJD 0.432, combo 0.627, markov
+**0.455**, notably closer to WJD than the LSTM is. The Markov chain's
+duration sampling draws directly from real WJD duration statistics with no
+Wolfson-style bias layer in between, so it lands nearer real players'
+actual distribution — a real, if indirect, second confirmation of Phase 30's
+finding that `singability`'s apparent combo-favouring gap was partly a
+measurement artifact (the target was calibrated from combo's own generated
+output), not a genuine LSTM-vs-reality quality difference.
+
+Deliberately minimal, named rather than silently incomplete: no
+`RehearsalMemory`/`corpus_familiarity`/`credit_resolved_tension`/
+`modal_strength` support (kept the comparison focused on the generation
+mechanism itself); no rest/breath modeling, so `phrasing` scores the Markov
+side harshly (0.172, even below WJD) for the same reason raw WJD note data
+initially did (Phase 30) — a known measurement artifact, not a new musical
+finding; two independent chains, not joint pitch+duration modeling; no
+register-aware biasing during the pitch walk (relies on the same backstop
+clipping the LSTM path already has).
+
 Recall is also **chord-quality-aware, not just pooled globally** (Phase 25):
 `RehearsalMemory.store`/`recall_motifs` take an optional `chord_quality`
 (Wolfson's 4-class major/dominant/minor/diminished system), computed once per

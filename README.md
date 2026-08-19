@@ -436,6 +436,33 @@ reported honestly rather than assumed resolved by the redesign alone; left
 as-is per David's reasoning, worth revisiting if a future listening test
 suggests otherwise.
 
+**A Markov-chain sax generator, sharing the LSTM's real critic and search**
+(Phase 35, `ensemble/markov_sax.py`) — a second data point on the
+`repetition` question. Since `ensemble/critic.py` is a pure function over
+note dicts, never anything LSTM-specific, the `n_candidates` search-and-
+select architecture isn't tied to the LSTM — `markov_sax_generator` plugs a
+genuinely different local generator into the identical critic and selection
+key, reusing `ensemble/sax.py`'s generation-mechanism-agnostic pieces
+directly. New `markov_corpus.py` builds quality-conditioned order-1
+transition tables from WJD (order picked empirically: order-1 is
+well-populated, order-2 gets sparse enough that singleton contexts would
+make the chain *more* mechanical, not less).
+
+Real result (`critic_baseline.py --markov`): `repetition` — WJD **0.147**,
+combo (LSTM) **0.296**, markov **0.269** — a completely different
+generation mechanism, no neural sampling at all, still shows repetition
+much closer to the LSTM than to WJD. Real evidence the gap isn't
+neural-sampling-specific, consistent with temperature not moving it either
+— looks like a more general property of short-context local generation.
+Bonus finding: `singability` — WJD 0.432, combo 0.627, markov **0.455**,
+notably closer to WJD — the Markov chain's duration sampling draws directly
+from real WJD statistics with no Wolfson-style bias layer, landing nearer
+real players' actual distribution, a second confirmation of Phase 30's
+"target calibrated from combo's own output" finding. Deliberately minimal:
+no memory/corpus/tension/modal support (keeps the comparison focused); no
+rest modeling, so `phrasing` scores it harshly (0.172, even below WJD) for
+the same reason raw WJD data initially did.
+
 **Recall is also chord-quality-aware, not just pooled globally** (Phase 25).
 `RehearsalMemory.store`/`recall_motifs` take an optional `chord_quality`
 (Wolfson's 4-class major/dominant/minor/diminished system), computed once per
@@ -896,7 +923,13 @@ suite is no longer sub-second once torch is imported.
   above), `corpus_motifs.py` (Phase 29 — `CorpusMotifs`, the runtime-
   consumable, chord-quality-aware lookup over a `wjd_corpus.py --build`
   cache; read-only, the corpus-side counterpart to `memory.py`'s
-  `RehearsalMemory`).
+  `RehearsalMemory`), `markov_tables.py` (Phase 35 — `MarkovTables`, the
+  runtime-consumable lookup over a `markov_corpus.py --build` cache;
+  weighted sampling with a marginal-distribution fallback for an unseen
+  context), `markov_sax.py` (Phase 35 — `markov_sax_generator`, a
+  Markov-chain sax voice sharing `sax.py`'s generation-mechanism-agnostic
+  helpers and `critic.py`'s selection key directly, rather than
+  reimplementing them).
 - `output/midi_output.py` — the playback stage (DESIGN.md §4): `list_output_ports`,
   `build_schedule` (pure: `Timeline` + tempo + channel map -> a time-sorted MIDI
   schedule), `play_timeline` (real-time playback, reusing `ensemble.session`'s
@@ -914,9 +947,15 @@ suite is no longer sub-second once torch is imported.
   `tests/test_transitions.py`, `tests/test_sax.py`, `tests/test_memory.py`,
   `tests/test_critic.py`, `tests/test_roles.py`, `tests/test_midi_output.py`,
   `tests/test_rhythm_motifs.py`, `tests/test_wjd_corpus.py`,
-  `tests/test_corpus_motifs.py`, `tests/test_critic_baseline.py` — no MIDI
+  `tests/test_corpus_motifs.py`, `tests/test_critic_baseline.py`,
+  `tests/test_markov_tables.py`, `tests/test_markov_corpus.py` — no MIDI
   hardware needed (`test_wjd_corpus.py` also covers Phase 31's
   `_wjd_expected_bass_pc`)
+- `tests/test_markov_sax.py` — the chain-walking sampler tests are pure, no
+  data needed; two real-consumer tests need the built `markov_corpus.py`
+  cache and skip cleanly if it's absent, but need NO LSTM weights at all
+  (the Markov generator never touches `PhraseGenerator`) — deliberately its
+  own file rather than folded into the `sax_best.pt`-gated integration file
 - `tests/test_sax_wolfson_integration.py` — needs the real `sax_best.pt` weights;
   skips cleanly if they're not present (see Running, below). Three Phase 29
   tests need a second, additional thing — the built WJD corpus cache
@@ -957,17 +996,27 @@ suite is no longer sub-second once torch is imported.
   `split_into_chord_runs` (Phase 30, full root+quality, finer-grained than
   the quality-only tagging used for the frequency table) for `critic_baseline.py`.
 - `critic_baseline.py` — small runnable analysis script (no MIDI/audio,
-  DESIGN.md §13, Phase 30): scores the real WJD corpus and N combo self-test
-  takes through the same `musicality_score` critic, prints a side-by-side
-  comparison — see the WJD-critic-baseline paragraph above for the real,
-  surprising numbers (`python critic_baseline.py`, `--takes N`, `--wjd-only`,
-  `--self-test-only`, `--corpus`, `--credit-resolved-tension`)
+  DESIGN.md §13, Phases 30 + 35): scores the real WJD corpus, N combo
+  self-test takes, and (with `--markov`) N `markov_sax_generator` takes
+  through the same `musicality_score` critic, prints a side-by-side
+  comparison — see the WJD-critic-baseline and Markov-generator paragraphs
+  above for the real numbers (`python critic_baseline.py`, `--takes N`,
+  `--wjd-only`, `--self-test-only`, `--corpus`, `--credit-resolved-tension`,
+  `--markov`, `--markov-order N`)
 - `bass_chord_check.py` — small runnable analysis script (no MIDI/audio,
   DESIGN.md §13, Phase 31): validates `wjd_corpus.py`'s chord-root
   extraction against `beats.bass_pitch` (independent of the chord string),
   reporting overall/downbeat/quality-class match rates and the worst-
   matching individual raw chord strings — see the chord-extraction-
   validation paragraph above for the real numbers (`python bass_chord_check.py`)
+- `markov_corpus.py` — small runnable script (DESIGN.md §13, Phase 35):
+  builds quality-conditioned order-`N` pitch-interval and duration-token
+  Markov transition tables from the real WJD corpus (reusing
+  `wjd_corpus.iter_solos`/`split_into_quality_runs` directly), caches to
+  `wjd_data/markov_tables.json`, times both the build and sample draws —
+  see the Markov-generator paragraph above for the real numbers
+  (`python markov_corpus.py --build`, `python markov_corpus.py --benchmark`,
+  `--order N`)
 
 ## Running
 
