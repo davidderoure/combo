@@ -984,6 +984,36 @@ outcome as Phase 23/40. Real, meaningful effect confirmed in `ensemble/
 demo.py`'s natural-vs-searched comparison (0.609 → 0.703) and at scale via
 `critic_baseline.py --self-test-only` (900 real chunks, mean 0.6631).
 
+**Laying out for a real structural cue, not just a fixed rest (Phase 43).**
+Discussing the descending-bias work, David raised phrase *timing*: a player
+will sometimes align the next phrase with something structural — the next
+bar, the next line of the chart, a chord change, or a V-I resolution — and
+it's genuinely fine to lay out until such a cue rather than resume right
+away. He explicitly ruled out always aligning ("it would sound like a
+beginner") and deferred "next line of the chart" (no representable
+structural unit for it — `Song`'s form model only has coarse `Section`s,
+checked directly — and "a player would start by looking at exactly this,"
+foundational enough to deserve its own future pass). A real simplification
+found before designing anything: a V-I resolution is *always* also a chord
+change, so "wait for a chord change" already subsumes every V-I without a
+separate check; giving V-I a *stronger preference* is a real, deliberately
+deferred refinement needing real listening feedback to calibrate. New
+`sax_generator(lay_out_for_cue_probability: float = 0.0)` — 0.0 reproduces
+today's exact behaviour. When a new chunk would build and the current bar
+isn't already a cue (`_is_structural_cue` — the chord differs from the
+previous bar), there's this probability of laying out (genuine silence, no
+`NoteEvent`s at all) until the next real cue, capped at `MAX_LAY_OUT_BARS`
+bars. Phase 39's boundary rest is suppressed when resuming from a real wait
+— the silence already separated the phrases; landing precisely on the cue
+is the point. Verified directly, not assumed: chord-change frequency is
+chart-dependent — `blues_in_f.chart` has 3 of 12 bars with no change (real
+stretches worth waiting through); `songs/ii_v_i.chart` changes every bar, so
+the mechanism never triggers there at all, correctly (nothing to wait for
+when a cue is always imminent). This is explicitly a bigger, riskier kind of
+change than Phases 40-42 (a real generation-*flow* decision, not a critic
+scoring tweak), so it stays opt-in via `self_test.py --lay-out-for-cues` for
+real listening, same discipline as `--respond-to-self`.
+
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-
 doubling role splitting applied to a voice changing role *over the course of* a

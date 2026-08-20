@@ -277,6 +277,10 @@ PHRASE_BOUNDARY_REST_BEATS = (0.5, 1.0)  # same rest-duration vocabulary as
                                             # ported) _REST_DURATIONS -- duplicated,
                                             # not imported, same precedent as
                                             # critic.py's MIN_BREATH_BEATS (Phase 39).
+MAX_LAY_OUT_BARS = 8  # Phase 43 -- safety cap: a real chord change might be
+                        # much further away than sensible to wait for (or, on
+                        # an unusual chart, never arrive again); after this
+                        # many bars of silence, resume regardless.
 
 # combo's 17 canonical qualities (song/chord.py's _QUALITY_ALIASES values) mapped
 # onto Wolfson's 4 harmonic-function classes. Root translation is the identity
@@ -347,6 +351,19 @@ def _bars_until_chord_change(song, start_beat: float, max_bars: int) -> int:
         if song.chord_at(start_beat + offset * BEATS_PER_BAR) != starting_chord:
             return offset
     return max_bars
+
+
+def _is_structural_cue(song, bar_start: float) -> bool:
+    """True if bar_start's chord differs from the previous bar's -- the one
+    cue Phase 43 implements. Subsumes V-I resolutions (always also a chord
+    change, since V and I are by definition different chords) without a
+    separate check -- see sax_generator's own docstring for why giving V-I a
+    STRONGER preference than an arbitrary chord change is a real, deliberately
+    deferred refinement, not attempted here. bar_start <= 0 has nothing before
+    it to compare against -- always a valid place to play."""
+    if bar_start <= 0:
+        return True
+    return song.chord_at(bar_start) != song.chord_at(bar_start - BEATS_PER_BAR)
 
 
 def _ii_v_i_target(song, ii_beat: float) -> Optional[int]:
@@ -473,6 +490,7 @@ def sax_generator(
     model_path: Optional[str] = None,
     seed: Optional[int] = None,
     own_voice_id: Optional[str] = None,
+    lay_out_for_cue_probability: float = 0.0,
 ) -> Generator:
     """Build a generator that responds to target_voice_id's recent notes with a
     real LSTM-generated phrase (ensemble/wolfson/), planned plan_bars bars ahead
@@ -612,7 +630,19 @@ def sax_generator(
     (ensemble/critic.py) reads the whole seed_phrase, so with own_voice_id
     active it partly measures relatedness to THIS voice's own recent playing
     too, not purely to target_voice_id -- not a bug, the natural way to
-    observe this mechanism's effect, but worth knowing going in."""
+    observe this mechanism's effect, but worth knowing going in.
+
+    lay_out_for_cue_probability (Phase 43), if > 0.0: when a new chunk is
+    about to be built and the current bar ISN'T already a structural cue
+    (_is_structural_cue -- currently just "the chord changed from the
+    previous bar", which subsumes every V-I resolution), there's this
+    probability of laying out -- genuine silence, not the Phase 39 rest --
+    until the next real cue arrives (capped at MAX_LAY_OUT_BARS bars), rather
+    than resuming right away. Default 0.0 reproduces today's exact behaviour
+    for every existing caller. When resuming from a real wait, the Phase 39
+    boundary rest is suppressed -- the silence already separated the
+    phrases; landing precisely on the cue is the whole point, not blurred by
+    an extra rest on top."""
     if seed is not None:
         import torch
 
@@ -638,6 +668,11 @@ def sax_generator(
                                             # detect a REAL chord change (not just a
                                             # plan_bars planning-horizon cap -- see
                                             # _bars_until_chord_change) between chunks
+    laying_out = {"active": False, "bars_waited": 0}  # Phase 43 -- whether this
+                                                         # voice is currently waiting
+                                                         # (genuine silence) for the
+                                                         # next real structural cue
+                                                         # instead of resuming right away
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
         if director_signal.gesture is not None and director_signal.gesture.name == "toggle_singability":
@@ -646,6 +681,30 @@ def sax_generator(
             dissonance_mode["enabled"] = not dissonance_mode["enabled"]
 
         bar_start = bar_index * BEATS_PER_BAR
+
+        # Phase 43: decide whether to lay out for a real structural cue
+        # instead of resuming right away -- only when a new chunk would
+        # otherwise be built now, and only when there's actually something
+        # to wait FOR (this bar isn't already a cue). Probabilistic so it
+        # doesn't become its own mechanical tell ("it would sound like a
+        # beginner" if it always aligned -- David's own framing).
+        resumed_from_wait = False
+        if not plan and not laying_out["active"]:
+            if (
+                lay_out_for_cue_probability > 0.0
+                and not _is_structural_cue(song, bar_start)
+                and random.random() < lay_out_for_cue_probability
+            ):
+                laying_out["active"] = True
+                laying_out["bars_waited"] = 0
+
+        if laying_out["active"]:
+            laying_out["bars_waited"] += 1
+            if _is_structural_cue(song, bar_start) or laying_out["bars_waited"] >= MAX_LAY_OUT_BARS:
+                laying_out["active"] = False
+                resumed_from_wait = True
+            else:
+                return []  # still waiting -- genuine silence, not a rest sentinel
 
         if not plan:
             span_bars = _bars_until_chord_change(song, bar_start, plan_bars)
@@ -772,8 +831,11 @@ def sax_generator(
             # on its own. Reuses _inject_rests' own rest-sentinel shape so
             # _split_phrase_into_bars (already REST_PITCH-aware) needs no
             # changes. Skipped before the very first chunk of the performance
-            # -- there's no prior phrase to separate this one from.
-            if chunks_dispensed["count"] > 0:
+            # -- there's no prior phrase to separate this one from. Also
+            # skipped when resuming from a real Phase 43 wait -- the silence
+            # already separated the phrases; landing precisely on the cue is
+            # the point, not blurred by an extra rest on top.
+            if chunks_dispensed["count"] > 0 and not resumed_from_wait:
                 notes = [
                     {
                         "pitch": REST_PITCH,
@@ -820,4 +882,5 @@ def sax_generator(
                                                   # mutable dict directly" convention as dissonance_mode
     generate.own_pitch_weighted = own_pitch_weighted  # exposed for testing (Phase 36) -- same convention
     generate.chunks_dispensed = chunks_dispensed  # exposed for testing (Phase 39) -- same convention
+    generate.laying_out = laying_out  # exposed for testing (Phase 43) -- same convention
     return generate

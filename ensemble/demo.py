@@ -503,6 +503,28 @@ def demo_sax_wolfson(chart_path: Path) -> None:
     print(f"    n_candidates=1: directional_naturalness={average_directional_naturalness(1):.3f}")
     print(f"    n_candidates=8: directional_naturalness={average_directional_naturalness(8):.3f}")
 
+    print("\n  Laying out for a real structural cue (Phase 43): instead of always")
+    print("  resuming right away with Phase 39's fixed small rest, the sax can")
+    print("  sometimes wait through genuine silence for the next real chord")
+    print("  change -- probabilistic, so it never becomes its own mechanical")
+    print(f"  tell. Shown here over {chart_path.name} with lay_out_for_cue_probability=1.0")
+    print("  (deterministic whenever eligible, so the real mechanism is visible")
+    print("  without hunting for a lucky seed) -- real silence at a real")
+    print("  no-chord-change bar, then landing precisely on the next real change:\n")
+
+    lay_out_bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    lay_out_sax_gen = sax_generator(
+        SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=5, plan_bars=1, lay_out_for_cue_probability=1.0,
+    )
+    lay_out_sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=lay_out_sax_gen)
+    lay_out_timeline = Session(song=blues_song, voices=[lay_out_bass, lay_out_sax]).generate(mode=MACHINE_SPEED)
+    lay_out_sax_events = sorted([e for e in lay_out_timeline if e.voice_id == "sax"], key=lambda e: e.start_beat)
+    for bar in range(8):
+        lo, hi = bar * BEATS_PER_BAR, (bar + 1) * BEATS_PER_BAR
+        events_this_bar = [e for e in lay_out_sax_events if lo <= e.start_beat < hi]
+        note_summary = ", ".join(f"{e.pitch}@{e.start_beat:.2f}" for e in events_this_bar) or "(silence -- laying out)"
+        print(f"    bar {bar}: {note_summary}")
+
     print("\n  A deliberate rest between chunks (Phase 39) -- \"speaking in")
     print("  sentences\": Wolfson's own self-play generates one phrase, plays it")
     print("  out, THEN feeds it back -- silence between phrases falls out of that")

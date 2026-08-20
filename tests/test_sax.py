@@ -14,6 +14,7 @@ from ensemble.sax import (
     _build_seed_phrase,
     _functional_tonic_scale,
     _ii_v_i_target,
+    _is_structural_cue,
     _pick_achievable_motif,
     _split_phrase_into_bars,
     chord_to_wolfson_index,
@@ -124,6 +125,21 @@ def test_bars_until_chord_change_finds_a_two_bar_hold():
 def test_bars_until_chord_change_caps_at_max_bars():
     song = _song_with_changes((Chord.parse("F7"), 16.0))  # one chord, 4 bars, no change ever
     assert _bars_until_chord_change(song, 0.0, max_bars=3) == 3
+
+
+def test_is_structural_cue_true_at_a_real_chord_change():
+    song = _song_with_changes((Chord.parse("F7"), 4.0), (Chord.parse("Bb7"), 4.0))
+    assert _is_structural_cue(song, BEATS_PER_BAR) is True  # bar 1: F7 -> Bb7
+
+
+def test_is_structural_cue_false_when_the_chord_holds():
+    song = _song_with_changes((Chord.parse("F7"), 8.0), (Chord.parse("Bb7"), 4.0))
+    assert _is_structural_cue(song, BEATS_PER_BAR) is False  # bar 1: still F7
+
+
+def test_is_structural_cue_true_at_bar_zero_regardless_of_chord():
+    song = _song_with_changes((Chord.parse("F7"), 16.0))  # one chord, never changes
+    assert _is_structural_cue(song, 0.0) is True  # nothing before it to compare against
 
 
 def test_ii_v_i_target_matches_a_textbook_ii_v_i():

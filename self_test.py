@@ -27,6 +27,10 @@ whole ensemble rather than one bass+sax pair).
                                                 # (Phase 37) -- mirrors Wolfson's own
                                                 # self-play ("the sax continuously
                                                 # responds to itself")
+    python self_test.py --lay-out-for-cues      # sax sometimes waits through genuine
+                                                # silence for the next real chord
+                                                # change instead of resuming right
+                                                # away (Phase 43)
 
 Generation is machine_speed (instant) — DESIGN.md §4's "generation produces a
 symbolic timeline, playback/scheduling is a separate stage" architecture is
@@ -67,6 +71,11 @@ KEYS_REGISTER = (48, 72)
 GUITAR_REGISTER = (52, 76)  # overlaps KEYS_REGISTER -- exercises Phase 15's role split
 DRUM_REGISTER = (35, 59)  # not musically meaningful for percussion, kept for Voice's shape
 SAX_WEIGHTS_PATH = Path(__file__).resolve().parent / "ensemble" / "wolfson" / "models" / "sax_best.pt"
+LAY_OUT_FOR_CUE_PROBABILITY = 0.3  # Phase 43 -- a real chosen placeholder,
+                                     # same honest status as every other
+                                     # hand-picked constant here; the actual
+                                     # per-chunk chance of laying out when
+                                     # --lay-out-for-cues is passed.
 
 # GM channel 10 (1-indexed) for drums -- drums.py's note constants are already
 # real GM percussion-map numbers. A plain dict, not a new field on Voice: a
@@ -118,6 +127,7 @@ def build_voices(
     disable_singability: bool = False,
     corpus: Optional[CorpusMotifs] = None,
     respond_to_self: bool = False,
+    lay_out_for_cues: bool = False,
 ):
     """Returns (voices, sax_gen) -- sax_gen is the bare generator closure behind
     the sax Voice (or None if sax_best.pt isn't present), kept separately so
@@ -145,7 +155,14 @@ def build_voices(
     stays the default sound. Pass --respond-to-self to also seed each chunk
     from the sax's own recent notes, alongside the bass, mirroring Wolfson's
     own self-play ("the sax continuously responds to itself") -- see
-    sax_generator's own docstring for the full reasoning."""
+    sax_generator's own docstring for the full reasoning.
+
+    lay_out_for_cues (Phase 43): off by default -- today's fixed small rest
+    between phrases stays the default. Pass --lay-out-for-cues to let the sax
+    sometimes wait through genuine silence for the next real chord change
+    (LAY_OUT_FOR_CUE_PROBABILITY, a real chosen placeholder) instead of
+    resuming right away -- see sax_generator's own docstring for the full
+    reasoning."""
     bass = Voice(
         id="bass",
         instrument="bass (walking-bass stub -- real bass generation isn't built yet)",
@@ -170,6 +187,7 @@ def build_voices(
             SAX_REGISTER, target_voice_id="bass", memory=memory, n_candidates=8, motif_recall_candidates=20,
             credit_resolved_tension=credit_resolved_tension, corpus=corpus,
             own_voice_id="sax" if respond_to_self else None,
+            lay_out_for_cue_probability=LAY_OUT_FOR_CUE_PROBABILITY if lay_out_for_cues else 0.0,
         )
         if disable_singability:
             sax_gen.critic_weights["singability"] = 0.0
@@ -238,6 +256,11 @@ def main() -> None:
                               "alongside the bass -- mirroring Wolfson's own self-play ('the sax "
                               "continuously responds to itself'). Off by default: today's "
                               "bass-only seeding stays the default sound.")
+    parser.add_argument("--lay-out-for-cues", action="store_true",
+                         help="Phase 43: sometimes wait through genuine silence for the next real "
+                              "chord change instead of resuming right away with a fixed small "
+                              "rest. Off by default: today's fixed Phase 39 rest stays the "
+                              "default sound.")
     args = parser.parse_args()
 
     if args.list_out:
@@ -261,7 +284,7 @@ def main() -> None:
         print(f"\nGenerating{label}...")
         voices, sax_gen = build_voices(
             memory, credit_resolved_tension=args.credit_resolved_tension, disable_singability=args.no_singability,
-            corpus=corpus, respond_to_self=args.respond_to_self,
+            corpus=corpus, respond_to_self=args.respond_to_self, lay_out_for_cues=args.lay_out_for_cues,
         )
         session = Session(song=song, voices=voices)
         timeline = session.generate(mode=MACHINE_SPEED)

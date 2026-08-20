@@ -169,6 +169,102 @@ def test_chunks_dispensed_counts_real_chunk_builds():
     assert sax_gen.chunks_dispensed["count"] == 2  # build_slow_song() always produces exactly 2 chunks
 
 
+def _drive_bars(sax_gen, song, n_bars: int, force_wait_at: int = None):
+    """Phase 43 test helper: manually drives sax_gen bar-by-bar (mirroring
+    Session.generate()'s own per-bar mechanics: a prior-bars-only Timeline
+    snapshot, voice_id stamped onto returned events) so a specific bar can
+    force sax_gen.laying_out active -- Session.generate() itself has no hook
+    for that. Returns the accumulated Timeline."""
+    from dataclasses import replace
+
+    from ensemble.timeline import Timeline
+
+    timeline = Timeline()
+    director_signal = DirectorSignal()
+    for bar_index in range(n_bars):
+        prior = Timeline(list(timeline.events))
+        if bar_index == force_wait_at:
+            sax_gen.laying_out["active"] = True
+            sax_gen.laying_out["bars_waited"] = 0
+        for event in sax_gen(song, bar_index, prior, director_signal):
+            timeline.add(replace(event, voice_id="sax"))
+    return timeline
+
+
+def test_lay_out_for_cue_lands_precisely_with_no_boundary_rest_when_resuming():
+    """Phase 43: force a wait right before a real no-change bar (bar 3 on
+    blues_in_f.chart), confirm genuine silence there, and confirm the FIRST
+    note of the next real chord-change bar (bar 4) lands exactly on its own
+    downbeat -- no Phase 39 boundary rest offset, the concrete
+    resumed_from_wait suppression proof."""
+    song = load_blues()
+    sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=5, plan_bars=1)
+    timeline = _drive_bars(sax_gen, song, n_bars=5, force_wait_at=3)
+
+    bar3_events = [e for e in timeline if 3 * BEATS_PER_BAR <= e.start_beat < 4 * BEATS_PER_BAR]
+    assert bar3_events == []  # genuine silence -- still waiting
+
+    bar4_events = sorted([e for e in timeline if e.start_beat >= 4 * BEATS_PER_BAR], key=lambda e: e.start_beat)
+    assert bar4_events  # a real chord change (F7->Bb7) -- resumed here
+    assert bar4_events[0].start_beat == 4 * BEATS_PER_BAR  # exactly on the downbeat, no rest offset
+
+
+def test_lay_out_for_cue_safety_cap_resumes_after_max_bars():
+    """Phase 43: build_slow_song() never changes chord, so a forced wait can
+    never find a real cue -- must resume via MAX_LAY_OUT_BARS regardless,
+    not wait indefinitely."""
+    from ensemble.sax import MAX_LAY_OUT_BARS
+
+    song = build_slow_song()
+    sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=5, plan_bars=1)
+    _drive_bars(sax_gen, song, n_bars=MAX_LAY_OUT_BARS + 3, force_wait_at=1)
+
+    assert sax_gen.laying_out["active"] is False
+    assert sax_gen.laying_out["bars_waited"] == MAX_LAY_OUT_BARS
+
+
+def test_lay_out_for_cue_produces_real_silence_over_blues_without_forcing_state():
+    """Phase 43: with lay_out_for_cue_probability=1.0 (deterministic entry
+    whenever eligible, no seed-hunting needed), a REAL, unforced
+    Session.generate() run over blues_in_f.chart shows genuine silence at
+    every real no-change bar (3, 5, 7) and real playing resumes at the
+    following real chord-change bars -- the concrete proof this engages for
+    real, not only when manually forced."""
+    song = load_blues()
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen = sax_generator(
+        SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=5, plan_bars=1, lay_out_for_cue_probability=1.0,
+    )
+    sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+    timeline = Session(song=song, voices=[bass, sax]).generate()
+    sax_events = [e for e in timeline if e.voice_id == "sax"]
+
+    for no_change_bar in (3, 5, 7):
+        lo, hi = no_change_bar * BEATS_PER_BAR, (no_change_bar + 1) * BEATS_PER_BAR
+        assert [e for e in sax_events if lo <= e.start_beat < hi] == []
+
+    for resume_bar in (4, 6, 8):
+        lo, hi = resume_bar * BEATS_PER_BAR, (resume_bar + 1) * BEATS_PER_BAR
+        assert [e for e in sax_events if lo <= e.start_beat < hi] != []
+
+
+def test_lay_out_for_cue_probability_zero_reproduces_existing_behaviour():
+    """Phase 43: the default (0.0) must reproduce exactly what sax_generator
+    already did before this phase -- the real backward-compatibility check."""
+    song = load_blues()
+
+    def run(lay_out_kwargs):
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=5, plan_bars=1, **lay_out_kwargs)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        timeline = Session(song=song, voices=[bass, sax]).generate()
+        return [e for e in timeline if e.voice_id == "sax"]
+
+    explicit_zero = run({"lay_out_for_cue_probability": 0.0})
+    unset = run({})
+    assert explicit_zero == unset
+
+
 def test_phrase_boundary_rest_duration_is_deterministic_given_a_seed():
     def dispensed_gap_at_second_chunk():
         bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))

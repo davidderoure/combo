@@ -986,6 +986,29 @@ Zero `sax.py` changes needed. Real effect confirmed in `ensemble/demo.py`
 (0.609 → 0.703, natural vs. searched) and at scale (900 chunks, mean
 0.6631 via `critic_baseline.py`).
 
+**Laying out for a real structural cue, not just a fixed rest** (Phase 43).
+David raised phrase *timing*: a player will sometimes align the next phrase
+with something structural — the next bar, the next line of the chart, a
+chord change, or a V-I resolution — and it's fine to lay out until such a
+cue rather than resume right away, as long as it's not *always* aligned
+("it would sound like a beginner"). "Next line of the chart" is explicitly
+deferred (`Song`'s form model has no representable unit for it, checked
+directly — foundational enough for its own future pass). A real
+simplification found first: a V-I resolution is always also a chord change,
+so "wait for a chord change" already subsumes it, no separate check needed
+— giving V-I a stronger preference is a real, deliberately deferred
+refinement. New `sax_generator(lay_out_for_cue_probability: float = 0.0)` —
+0.0 reproduces today's exact behaviour. When a new chunk would build and the
+current bar isn't already a chord change, there's this probability of
+laying out (genuine silence) until the next real one, capped at
+`MAX_LAY_OUT_BARS`. Phase 39's boundary rest is suppressed when resuming
+from a real wait — the silence already did that job. Verified directly:
+chord-change frequency is chart-dependent — `blues_in_f.chart` has 3 of 12
+bars with no change (real stretches to wait through); `songs/ii_v_i.chart`
+changes every bar, so this correctly never triggers there. A bigger, riskier
+kind of change than Phases 40-42 (generation flow, not a critic tweak), so
+it's opt-in via `self_test.py --lay-out-for-cues`.
+
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built
 in Phase 5 (every phase since had repeated some version of "a director-emitted
