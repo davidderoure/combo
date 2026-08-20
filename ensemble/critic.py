@@ -50,7 +50,7 @@ musically validated.
 
 import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from .corpus_motifs import CorpusMotifs
 from .rhythm_motifs import extract_duration_motifs
@@ -141,6 +141,13 @@ DEFAULT_WEIGHTS = {
     # showed sustain_quality varying 0.17-0.60 (mean 0.42) -- not degenerate,
     # a genuine discriminating signal.
     "sustain_quality": 0.15,
+    # Phase 42 -- a new placeholder weight, same status as every other. A
+    # smooth "nudge" against a phrase's own same-direction runs being much
+    # longer than what real WJD solos show (geometric decay, no hard cutoff
+    # -- see directional_naturalness's own docstring for the real WJD
+    # run-length data this is calibrated against and why a nudge, not a
+    # penalty, was the explicit design goal).
+    "directional_naturalness": 0.15,
 }
 
 
@@ -870,6 +877,95 @@ def sustain_quality(notes: list, chord_idx: int, modal: bool = False) -> float:
     return on_tone_beats / total_beats if total_beats > 0 else 0.0
 
 
+WJD_UP_RUN_CONTINUATION = 0.5103    # placeholder, derived directly from real WJD
+                                       # data (Phase 42): mean up-run length 2.042
+                                       # across 456 real solos / ~44,871 runs --
+                                       # for a geometric run-length model
+                                       # (P(length>=L) = p^(L-1)), mean = 1/(1-p)
+                                       # -> p = 1-1/mean. Checked against the real
+                                       # empirical fractions up to L=6, a good fit
+                                       # (e.g. L=3: fit 26.0% vs real 24.9%; L=6:
+                                       # fit 3.5% vs real 4.3%).
+WJD_DOWN_RUN_CONTINUATION = 0.5451  # same derivation, mean down-run length 2.198
+                                       # (fit vs real: L=3 29.7%/29.7%, L=6
+                                       # 4.8%/5.6%).
+
+
+def _direction_runs(pitches: list) -> List[Tuple[str, int]]:
+    """(direction, length) for each maximal run of consecutive same-direction
+    intervals -- 'up' or 'down'. A same-pitch move BREAKS a run (doesn't count
+    toward either direction) -- this exact convention is load-bearing: it's
+    what WJD_UP_RUN_CONTINUATION/WJD_DOWN_RUN_CONTINUATION were themselves
+    derived against (Phase 42), so scoring must use the identical rule or the
+    calibration is meaningless."""
+    runs: List[Tuple[str, int]] = []
+    current_direction: Optional[str] = None
+    current_length = 0
+    for i in range(len(pitches) - 1):
+        delta = pitches[i + 1] - pitches[i]
+        direction = "up" if delta > 0 else ("down" if delta < 0 else None)
+        if direction is None:
+            if current_direction is not None:
+                runs.append((current_direction, current_length))
+            current_direction, current_length = None, 0
+            continue
+        if direction == current_direction:
+            current_length += 1
+        else:
+            if current_direction is not None:
+                runs.append((current_direction, current_length))
+            current_direction, current_length = direction, 1
+    if current_direction is not None:
+        runs.append((current_direction, current_length))
+    return runs
+
+
+def directional_naturalness(notes: list) -> float:
+    """Interval-count-weighted mean of, for each maximal same-direction run in
+    the phrase, how common a run THAT LONG is in real WJD solos (the geometric
+    model above, Phase 42) -- 1.0 for a short/ordinary run (matches WJD
+    closely), smoothly lower for a run considerably longer than what real
+    players show. No hard cutoff by construction -- geometric decay has no
+    threshold at all, directly the "nudge, not a penalty" David asked for:
+    repeated same-direction motion is a real, legitimate part of a developing
+    solo, not inherently penalised.
+
+    Prompted directly by a real listening test: both takes showed a much
+    stronger down-vs-up asymmetry than real WJD solos do (WJD leans down too,
+    49.2% vs 45.7%, but combo's blues take was 58% vs 34%) -- checked before
+    building anything, not assumed generation-specific: since combo's own
+    architecture already supports swapping generators (Phase 35's Markov
+    comparison), the CRITIC needs to own this sensitivity regardless of which
+    generator produced the notes, not rely on any one generator's own
+    tendencies.
+
+    Weighted by each run's own LENGTH (how many intervals it covers), not
+    counted once per run -- a phrase dominated by one long run scores lower in
+    aggregate than one with the same long run diluted among several short
+    ones, the same "weight by how much of the phrase this represents"
+    principle register_balance/sustain_quality already use, applied to
+    interval count instead of duration (the natural unit for a metric about
+    intervals, not durations).
+
+    Fewer than 2 real notes (nothing to form a run at all) -> 1.0, NOT 0.0 --
+    there's no evidence of excess to penalise, the same "vacuously fine, not
+    vacuously bad" precedent call_response_relatedness's own shapeless-phrase
+    case already sets, not this module's usual "no notes -> 0.0" convention
+    (which assumes 0.0 means "worst possible", true for scale/register
+    coverage but wrong here)."""
+    real = _real_notes(notes)
+    pitches = [n["pitch"] for n in real]
+    runs = _direction_runs(pitches)
+    if not runs:
+        return 1.0
+    total_length = sum(length for _direction, length in runs)
+    weighted_sum = sum(
+        length * (WJD_UP_RUN_CONTINUATION if direction == "up" else WJD_DOWN_RUN_CONTINUATION) ** (length - 1)
+        for direction, length in runs
+    )
+    return weighted_sum / total_length
+
+
 @dataclass(frozen=True)
 class MusicalityScore:
     tonal_conformity: float
@@ -881,6 +977,7 @@ class MusicalityScore:
     register_usage: float
     register_balance: float
     sustain_quality: float
+    directional_naturalness: float
     overall: float
 
 
@@ -924,6 +1021,7 @@ def musicality_score(
         "register_usage": register_usage(notes, register, prior_range),
         "register_balance": register_balance(notes, register, prior_mean_beats),
         "sustain_quality": sustain_quality(notes, chord_idx, modal),
+        "directional_naturalness": directional_naturalness(notes),
     }
     overall = sum(scores[key] * weights.get(key, 0.0) for key in scores)
     return MusicalityScore(overall=overall, **scores)

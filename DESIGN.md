@@ -91,13 +91,14 @@ to a string of U/D/S compared by edit distance; a striking, unplanned overlap wi
 exact U/D/S vocabulary for an unrelated purpose), and Wolfson's own ported bias
 layers, three of which are repurposed from generation-time sampling biases into
 retrospective scoring functions (singability's bell curve, voice-leading's
-chord-tone resolution). All nine metrics (`tonal_conformity`, `contour_smoothness`,
+chord-tone resolution). All ten metrics (`tonal_conformity`, `contour_smoothness`,
 `repetition`, `call_response_relatedness`, `singability`, `phrasing` — Phase 23,
 `register_usage` — Phase 24, `register_balance` — Phase 36, `sustain_quality` —
-Phase 40, below) are pure, deterministic functions needing no model inference —
+Phase 40, `directional_naturalness` — Phase 42, below) are pure, deterministic
+functions needing no model inference —
 the first sax-adjacent test file since Phase 8 that's fully testable without
 `sax_best.pt`. `phrasing` is the
-only one of the nine that looks at raw notes (including `REST_PITCH` sentinels)
+only one of the ten that looks at raw notes (including `REST_PITCH` sentinels)
 rather than the
 `_real_notes()`-filtered view every other metric uses — prompted directly by a
 listening-test observation ("the solos are not speaking in 'sentences' with gaps
@@ -948,6 +949,40 @@ relaxing the dissonance gate for a few beats before a change (mirroring
 `toggle_dissonance_avoidance`) and requiring this landing check afterward
 would let `n_candidates` search approximate it almost entirely out of
 already-existing pieces.
+
+**`directional_naturalness` — a WJD-calibrated nudge against excessive one-way
+runs (Phase 42).** A real listening test (`listtest4.mid`, both charts,
+`--respond-to-self`) found a strong descending bias: note-to-note, 58%/52% down
+vs. 34%/42% up; at the phrase level, roughly 4× as many net-descending phrases
+as net-ascending ones. Checked against real WJD data before assuming this was
+wrong: real solos DO lean down too (49.2% vs. 45.7%, 456 solos, ~200k moves) —
+the phenomenon itself is real — but combo's asymmetry is considerably stronger.
+David reasoned through the architecture directly: this might be generation-side
+(never measured when Wolfson was tested standalone), but since combo already
+supports swapping generators (Phase 35's Markov comparison), the **critic**
+needs to own this sensitivity regardless of which generator is behind it. He
+also set a real design constraint: repeated same-direction motion can be part
+of a deliberate, developing solo, so this needed to be "a nudge, not a
+penalty" — and asked to check WJD's own run-length distribution first.
+
+Real WJD calibration, computed directly: same-direction interval runs across
+all 456 solos (~44,800 per direction) decay geometrically with striking
+regularity (`P(run length ≥ L)` ratio ≈0.55-0.56 at every step checked) —
+consistent with a geometric run-length model, `P(length ≥ L) = p^(L-1)`, fit
+directly from each direction's real mean run length (`p = 1 - 1/mean`): up
+mean 2.042 → `p_up=0.5103`; down mean 2.198 → `p_down=0.5451`. Checked against
+the real empirical fractions up to L=6 — a good fit (e.g. L=3: fit 26.0% vs.
+real 24.9%; L=6: fit 3.5% vs. real 4.3%). New `directional_naturalness` —
+a `MusicalityScore` field (not gated like `chord_change_landing`, since
+directional naturalness is meaningful for every candidate): an interval-
+count-weighted mean of, for each maximal same-direction run in a candidate,
+how common a run that long is in real WJD solos under the geometric model —
+1.0 for a short/ordinary run, smoothly (no cliff-edge threshold at all,
+directly the "nudge" David asked for) lower for a run considerably longer
+than what real players show. Zero `ensemble/sax.py` changes needed, same
+outcome as Phase 23/40. Real, meaningful effect confirmed in `ensemble/
+demo.py`'s natural-vs-searched comparison (0.609 → 0.703) and at scale via
+`critic_baseline.py --self-test-only` (900 real chunks, mean 0.6631).
 
 **Not yet built even within these MVPs**: the tune-level solo/accompany/lay-out/
 trade role assignment (needs the rest of `ArcController`), same-instrument-

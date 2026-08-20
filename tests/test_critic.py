@@ -17,8 +17,11 @@ from ensemble.critic import (
     MODAL_LEAP_SEMITONES,
     TARGET_BREATH_FRACTION,
     TONAL_RESOLUTION_WEIGHT,
+    WJD_DOWN_RUN_CONTINUATION,
+    WJD_UP_RUN_CONTINUATION,
     _autocorrelation,
     _contour_string,
+    _direction_runs,
     _is_passing_tone,
     _is_resolved_tension,
     _levenshtein,
@@ -29,6 +32,7 @@ from ensemble.critic import (
     chord_change_landing,
     contour_smoothness,
     corpus_familiarity,
+    directional_naturalness,
     dissonance,
     dissonance_scale,
     motif_adherence,
@@ -1024,6 +1028,55 @@ def test_chord_change_landing_modal_uses_quartal_tones_instead_of_tertian():
 
 
 # ---------------------------------------------------------------------------
+# _direction_runs / directional_naturalness (Phase 42)
+# ---------------------------------------------------------------------------
+
+
+def test_direction_runs_empty_or_single_note_is_empty():
+    assert _direction_runs([]) == []
+    assert _direction_runs([60]) == []
+
+
+def test_direction_runs_a_same_pitch_move_breaks_a_run():
+    # 60->60: same pitch, no run. 60->62: up run starts fresh (length 1),
+    # not continuing anything from before the break.
+    assert _direction_runs([60, 60, 62]) == [("up", 1)]
+
+
+def test_direction_runs_matches_a_known_sequence():
+    # +2, +2, -1, -1, -1, 0 (break), +4 -> up(2), down(3), up(1)
+    pitches = [60, 62, 64, 63, 62, 61, 61, 65]
+    assert _direction_runs(pitches) == [("up", 2), ("down", 3), ("up", 1)]
+
+
+def test_directional_naturalness_no_real_notes_is_one():
+    assert directional_naturalness([]) == 1.0
+    assert directional_naturalness(notes_from_pitches([60])) == 1.0
+
+
+def test_directional_naturalness_single_interval_run_is_exactly_one():
+    # One interval (a run of length 1) is trivially common -- p^(1-1) = p^0 = 1.
+    assert directional_naturalness(notes_from_pitches([60, 62])) == pytest.approx(1.0)
+    assert directional_naturalness(notes_from_pitches([62, 60])) == pytest.approx(1.0)
+
+
+def test_directional_naturalness_matches_the_geometric_formula_for_a_single_run():
+    # One run only (a monotonic ascending line, 5 notes -> 4 up-intervals) --
+    # weighted average degenerates to that single run's own formula value.
+    notes = notes_from_pitches([60, 62, 64, 66, 68])
+    assert directional_naturalness(notes) == pytest.approx(WJD_UP_RUN_CONTINUATION ** 3)
+
+
+def test_directional_naturalness_dilutes_a_long_run_among_shorter_ones():
+    # Same total up-motion (4 up-intervals), but split into two shorter
+    # up-runs separated by a down move, instead of one long continuous run --
+    # scores HIGHER (closer to natural), the concrete "dilution" proof.
+    one_long_run = notes_from_pitches([60, 62, 64, 66, 68])
+    diluted = notes_from_pitches([60, 62, 64, 63, 65, 67])
+    assert directional_naturalness(diluted) > directional_naturalness(one_long_run)
+
+
+# ---------------------------------------------------------------------------
 # musicality_score combination
 # ---------------------------------------------------------------------------
 
@@ -1043,6 +1096,7 @@ def test_musicality_score_overall_is_the_documented_weighted_sum():
         + score.register_usage * DEFAULT_WEIGHTS["register_usage"]
         + score.register_balance * DEFAULT_WEIGHTS["register_balance"]
         + score.sustain_quality * DEFAULT_WEIGHTS["sustain_quality"]
+        + score.directional_naturalness * DEFAULT_WEIGHTS["directional_naturalness"]
     )
     assert score.overall == pytest.approx(expected_overall)
 

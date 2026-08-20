@@ -343,7 +343,7 @@ contrast, ...) stay at their defaults; hidden-state continuity still resets
 **A phrasing/breath metric — "speaking in sentences"** (Phase 23). From the same
 listening test as Phase 22: "the solos are not speaking in 'sentences' with gaps
 in between, which is something that is taught by educators." `phrasing()` is the
-only one of the nine metrics that looks at raw `notes` (including `REST_PITCH`
+only one of the ten metrics that looks at raw `notes` (including `REST_PITCH`
 sentinels) rather than the `_real_notes()`-filtered view every other metric
 uses — `phrase_generator.py`'s own `_inject_rests` already splices genuine rests
 into generated output (bell-curve-weighted toward the phrase midpoint, capped at
@@ -963,6 +963,28 @@ own precedent) — it needs real generation-time mechanics, not a scoring
 check; one idea for later: relaxing the dissonance gate briefly before a
 change and requiring this landing check afterward, approximating it almost
 entirely from existing pieces.
+
+**`directional_naturalness` — a WJD-calibrated nudge against excessive
+one-way runs** (Phase 42). A real listening test found a strong descending
+bias (58%/52% down vs. 34%/42% up, note-to-note; ~4× as many net-descending
+phrases as net-ascending). Checked against real WJD data first: real solos
+lean down too (49.2% vs. 45.7%), so the phenomenon itself is real — combo's
+asymmetry is just considerably stronger. Since combo already supports
+swapping generators (Phase 35), the critic needs to own this sensitivity
+regardless of which generator produced the notes — and it needed to be "a
+nudge, not a penalty," since repeated same-direction motion can be a real
+part of a developing solo. Real WJD run-length data (~44,800 runs per
+direction) decays geometrically with striking regularity, so `P(length ≥ L)
+= p^(L-1)` was fit directly from each direction's real mean run length
+(`p_up=0.5103`, `p_down=0.5451`) — checked against the real fractions up to
+L=6, a good fit. New `MusicalityScore` field (not gated, since this is
+meaningful for every candidate, unlike `chord_change_landing`): an
+interval-count-weighted mean of how common each of a candidate's own runs
+is under this geometric model — 1.0 for an ordinary run, smoothly (no
+cliff-edge threshold — the actual "nudge") lower for an unusually long one.
+Zero `sax.py` changes needed. Real effect confirmed in `ensemble/demo.py`
+(0.609 → 0.703, natural vs. searched) and at scale (900 chunks, mean
+0.6631 via `critic_baseline.py`).
 
 **A director can now toggle the critic live** (Phase 13, DESIGN.md §11) — the
 first real consumer of `DirectorSignal.gesture` since the dial channel was built

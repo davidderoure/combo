@@ -482,6 +482,27 @@ def demo_sax_wolfson(chart_path: Path) -> None:
     print(f"    n_candidates=1: landing rate={landing_rate(1):.2f}")
     print(f"    n_candidates=8: landing rate={landing_rate(8):.2f}")
 
+    print("\n  A WJD-calibrated nudge against excessive one-way runs (Phase 42):")
+    print("  directional_naturalness scores a phrase's same-direction pitch")
+    print("  runs against a geometric model fit to real WJD run-length data --")
+    print("  1.0 for an ordinary run, smoothly (not a hard cutoff) lower for a")
+    print("  run considerably longer than what real players show. A real")
+    print("  listening test found combo's own runs, especially descending ones,")
+    print("  running noticeably longer than WJD's own natural rate. Shown here:")
+    print("  average directional_naturalness of what's actually dispensed,")
+    print("  natural (n_candidates=1) vs. searched (n_candidates=8):\n")
+
+    def average_directional_naturalness(n_candidates: int) -> float:
+        bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=n_candidates, seed=11)
+        sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+        Session(song=changing_song, voices=[bass, sax]).generate(mode=MACHINE_SPEED)
+        values = [s.directional_naturalness for s in sax_gen.winning_score_log]
+        return sum(values) / len(values) if values else 0.0
+
+    print(f"    n_candidates=1: directional_naturalness={average_directional_naturalness(1):.3f}")
+    print(f"    n_candidates=8: directional_naturalness={average_directional_naturalness(8):.3f}")
+
     print("\n  A deliberate rest between chunks (Phase 39) -- \"speaking in")
     print("  sentences\": Wolfson's own self-play generates one phrase, plays it")
     print("  out, THEN feeds it back -- silence between phrases falls out of that")
