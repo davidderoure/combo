@@ -435,6 +435,27 @@ separate `DEFAULT_WEIGHTS` key (`0.15`) — `register_usage` and
 averages **0.4499** — a real gap between "touched the edges" and "spends
 time using the whole range," confirming the listening-test diagnosis.
 
+**`register_balance` now decays over time instead of accumulating forever**
+(Phase 44). A further listening test (MIDI from a `--respond-to-self
+--lay-out-for-cues` run) found `songs/ii_v_i.chart`'s take stuck low for an
+extended opening stretch, recovering only gradually — `blues_in_f.chart`'s
+similar dip, happening late, corrected almost instantly. Root cause:
+`own_pitch_weighted` (`ensemble/sax.py`) was a pure whole-performance
+cumulative sum with no decay — an early bad patch dominates a still-thin mean
+immediately; a late one is diluted by already-accumulated history. Fixed via a
+new pure helper, `_decay_pitch_weighted`, exponentially decaying
+`own_pitch_weighted` proportional to real elapsed beats (not chunk count) —
+`register_balance()` itself is unchanged, only how its input is tracked over
+time. `REGISTER_BALANCE_HALF_LIFE_BEATS = 16.0` (4 bars) is a placeholder.
+Real, measured: `register_balance`'s average moved from 0.4653 to **0.3982** —
+the expected direction once understood, since the old cumulative average was
+flattered by whole-performance smoothing; the new windowed measure more
+honestly reflects *recent* register drift. Confirms the mechanism responds to
+real elapsed time, not that the specific pattern is fixed by ear (needs a real
+listening test). `register_usage`'s own `prior_range` (Phase 32) likely has
+the same whole-performance-accumulator property — a named, deliberately
+deferred, separate follow-on.
+
 **`repetition`'s weight is negative now, not just retuned** (Phase 33). The
 literal reading of "reweight using the real WJD number" — just increase the
 weight — would have backfired: `repetition()` returns `1.0` when a chunk

@@ -194,6 +194,40 @@ satisfy) while `register_balance` averages **0.4499** — a real, substantial
 gap between "touched the edges" and "actually spends time using the whole
 range," concretely confirming the listening-test diagnosis with numbers.
 
+**`register_balance` now decays over time instead of accumulating forever
+(Phase 44).** A further real listening test (David recorded and sent MIDI from a
+`self_test.py --respond-to-self --lay-out-for-cues` run over both reference
+charts) found `songs/ii_v_i.chart`'s take got stuck low for an extended opening
+stretch before gradually recovering — "like the old attractor basin." Real
+time-binned register analysis of the recording confirmed a severe, sustained dip
+in the first ~15 seconds, recovering only gradually across several following
+bins, while `blues_in_f.chart`'s take showed a similar brief dip late in the
+performance that self-corrected almost instantly. Root cause, diagnosed directly
+from the code: `own_pitch_weighted` (`ensemble/sax.py`) was a pure whole-
+performance cumulative sum with no window or decay — an early bad patch
+dominates a still-thin cumulative mean immediately, while a late one is diluted
+by a large pool of already-accumulated healthy history, exactly the asymmetry
+observed. Fixed by exponentially decaying `own_pitch_weighted` proportional to
+real elapsed beats (not chunk count) each time it's updated, via a new pure
+helper `_decay_pitch_weighted(pitch_sum, pitch_beats, elapsed_beats,
+half_life_beats)` — `register_balance()` itself is untouched; only how
+`ensemble/sax.py` maintains its input over time changed. `REGISTER_BALANCE_HALF_LIFE_BEATS
+= 16.0` (4 bars) is a placeholder, not empirically tuned against real audio yet.
+Real, measured via `critic_baseline.py --self-test-only`: `register_balance`'s
+average moved from 0.4653 to **0.3982** — a real drop, the expected direction
+once understood: the old cumulative average was flattered by whole-performance
+smoothing (law-of-large-numbers regression toward the register's centre
+regardless of any specific stretch's actual behaviour); the new windowed measure
+is a more honest reflection of *recent* register drift, which is exactly what
+was needed to catch and price in a stuck-low stretch rather than being diluted
+by it. Confirms the mechanism is genuinely responding to real elapsed time, not
+that the specific "stuck low, eventually recovers" pattern is fixed by ear — that
+needs a real listening test to confirm. A named, deliberately deferred parallel:
+`register_usage`'s own `prior_range` (Phase 32) is *also* a whole-performance
+accumulator with no decay (a span, not a mean, so the same "inertia" argument
+doesn't obviously apply) — a plausible, real, separate follow-on, not fixed
+speculatively here since no listening-test evidence has pointed at it.
+
 **`repetition`'s weight is negative now, not just retuned (Phase 33).**
 David's own proposal was to reweight `repetition` using the real WJD number
 (29.4% of chunks show repetition) as a calibration target, mirroring how

@@ -12,6 +12,7 @@ from ensemble.sax import (
     _bars_until_chord_change,
     _build_combined_seed_phrase,
     _build_seed_phrase,
+    _decay_pitch_weighted,
     _functional_tonic_scale,
     _ii_v_i_target,
     _is_structural_cue,
@@ -140,6 +141,26 @@ def test_is_structural_cue_false_when_the_chord_holds():
 def test_is_structural_cue_true_at_bar_zero_regardless_of_chord():
     song = _song_with_changes((Chord.parse("F7"), 16.0))  # one chord, never changes
     assert _is_structural_cue(song, 0.0) is True  # nothing before it to compare against
+
+
+def test_decay_pitch_weighted_zero_elapsed_is_unchanged():
+    assert _decay_pitch_weighted(120.0, 4.0, elapsed_beats=0.0, half_life_beats=16.0) == (120.0, 4.0)
+
+
+def test_decay_pitch_weighted_one_half_life_halves_both():
+    pitch_sum, beats = _decay_pitch_weighted(120.0, 4.0, elapsed_beats=16.0, half_life_beats=16.0)
+    assert pitch_sum == 60.0
+    assert beats == 2.0
+
+
+def test_decay_pitch_weighted_two_half_lives_quarters_both():
+    pitch_sum, beats = _decay_pitch_weighted(120.0, 4.0, elapsed_beats=32.0, half_life_beats=16.0)
+    assert pitch_sum == 30.0
+    assert beats == 1.0
+
+
+def test_decay_pitch_weighted_zero_input_stays_zero():
+    assert _decay_pitch_weighted(0.0, 0.0, elapsed_beats=100.0, half_life_beats=16.0) == (0.0, 0.0)
 
 
 def test_ii_v_i_target_matches_a_textbook_ii_v_i():

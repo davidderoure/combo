@@ -16,7 +16,13 @@ from ensemble.corpus_motifs import CorpusMotifs
 from ensemble.director import Director, DirectorSignal, constant_director_source
 from ensemble.generators import chord_tone_generator
 from ensemble.memory import RehearsalMemory
-from ensemble.sax import DEFAULT_MOTIF_STRENGTH, PHRASE_BOUNDARY_REST_BEATS, sax_generator
+from ensemble.sax import (
+    DEFAULT_MOTIF_STRENGTH,
+    PHRASE_BOUNDARY_REST_BEATS,
+    REGISTER_BALANCE_HALF_LIFE_BEATS,
+    _decay_pitch_weighted,
+    sax_generator,
+)
 from ensemble.session import Session
 from ensemble.timeline import BEATS_PER_BAR
 from ensemble.voice import Voice
@@ -1964,6 +1970,72 @@ def test_prior_mean_beats_reaches_real_selection_on_the_second_chunk():
         assert prior_mean_beats[0] == pytest.approx(expected_sum)
         assert prior_mean_beats[1] == pytest.approx(expected_beats)
 
-    all_sax_events = [e for e in timeline if e.voice_id == "sax"]
-    assert sax_gen.own_pitch_weighted["sum"] == pytest.approx(sum(e.pitch * e.duration_beats for e in all_sax_events))
-    assert sax_gen.own_pitch_weighted["beats"] == pytest.approx(sum(e.duration_beats for e in all_sax_events))
+    # Phase 44: own_pitch_weighted's FINAL state (after chunk 2's own update)
+    # now decays chunk 1's raw contribution by the real elapsed beats between
+    # the two updates (second_chunk_start - 0.0 = 16 beats = exactly one
+    # REGISTER_BALANCE_HALF_LIFE_BEATS) before adding chunk 2's own
+    # contribution -- no longer the plain undecayed sum of every dispensed
+    # event. Recomputed independently via _decay_pitch_weighted, not assumed.
+    chunk2_events = [e for e in timeline if e.voice_id == "sax" and e.start_beat >= second_chunk_start]
+    decayed_sum, decayed_beats = _decay_pitch_weighted(
+        expected_sum, expected_beats, second_chunk_start - 0.0, REGISTER_BALANCE_HALF_LIFE_BEATS,
+    )
+    expected_final_sum = decayed_sum + sum(e.pitch * e.duration_beats for e in chunk2_events)
+    expected_final_beats = decayed_beats + sum(e.duration_beats for e in chunk2_events)
+    assert sax_gen.own_pitch_weighted["sum"] == pytest.approx(expected_final_sum)
+    assert sax_gen.own_pitch_weighted["beats"] == pytest.approx(expected_final_beats)
+
+
+def test_own_pitch_weighted_decays_more_over_a_larger_gap():
+    """Phase 44: not every chunk's own real content lands in-register (a
+    real, pre-existing, seed-dependent property this test doesn't want to
+    depend on), so the gap is created deterministically by backdating
+    own_pitch_weighted_last_beat directly -- the same "manipulate exposed
+    closure state directly for testing" convention already used for
+    laying_out["active"] (Phase 43). Spies on ensemble.sax's own
+    _decay_pitch_weighted to confirm elapsed_beats genuinely reflects
+    whatever real gap is set up, rather than being a fixed per-update
+    factor -- a much larger, artificially backdated gap here than the
+    single-half-life gap test_prior_mean_beats_reaches_real_selection_on_
+    the_second_chunk's own fix exercises."""
+    from dataclasses import replace
+
+    from ensemble.timeline import Timeline
+
+    import ensemble.sax as sax_module
+
+    original_decay = sax_module._decay_pitch_weighted
+    elapsed_calls = []
+
+    def decay_wrapper(pitch_sum, pitch_beats, elapsed_beats, half_life_beats):
+        elapsed_calls.append(elapsed_beats)
+        return original_decay(pitch_sum, pitch_beats, elapsed_beats, half_life_beats)
+
+    sax_module._decay_pitch_weighted = decay_wrapper
+    try:
+        song = build_slow_song()
+        sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=1, seed=5, plan_bars=1)
+        timeline = _drive_bars(sax_gen, song, n_bars=1)  # bar 0: a real first update, elapsed_beats == 0
+        assert sax_gen.own_pitch_weighted_last_beat["value"] == 0.0  # confirms bar 0 really updated it
+
+        # bar 1's own chunk (this seed, this song) happens not to land any
+        # real in-register content -- a real, pre-existing, seed-dependent
+        # property this test doesn't want to depend on -- so the gap is
+        # created deterministically by backdating own_pitch_weighted_last_beat
+        # directly instead, whichever bar ends up updating it next.
+        backdated_last_beat = -1000.0
+        sax_gen.own_pitch_weighted_last_beat["value"] = backdated_last_beat
+        director_signal = DirectorSignal()
+        for bar_index in (1, 2):
+            prior = Timeline(list(timeline.events))
+            for event in sax_gen(song, bar_index, prior, director_signal):
+                timeline.add(replace(event, voice_id="sax"))
+    finally:
+        sax_module._decay_pitch_weighted = original_decay
+
+    assert elapsed_calls[0] == 0.0  # bar 0's own update
+    assert len(elapsed_calls) >= 2  # a real second update happened
+    resume_bar_start = 2 * BEATS_PER_BAR  # bar 2 is where this seed's second real update lands
+    real_gap = resume_bar_start - backdated_last_beat
+    assert elapsed_calls[-1] == pytest.approx(real_gap)
+    assert elapsed_calls[-1] > 10 * REGISTER_BALANCE_HALF_LIFE_BEATS  # far more than one half-life

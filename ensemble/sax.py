@@ -281,6 +281,19 @@ MAX_LAY_OUT_BARS = 8  # Phase 43 -- safety cap: a real chord change might be
                         # much further away than sensible to wait for (or, on
                         # an unusual chart, never arrive again); after this
                         # many bars of silence, resume regardless.
+REGISTER_BALANCE_HALF_LIFE_BEATS = 16.0  # Phase 44 -- 4 bars. Placeholder,
+                                            # same honest status as every other
+                                            # hand-picked constant here, not
+                                            # empirically tuned against real
+                                            # audio yet. Chosen so an early bad
+                                            # register patch's influence fades
+                                            # within roughly a phrase or two
+                                            # (after 2-3 half-lives / 32-48
+                                            # beats, old history is down to
+                                            # 12-25% weight) while still long
+                                            # enough that register_balance
+                                            # isn't reduced to chunk-to-chunk
+                                            # noise.
 
 # combo's 17 canonical qualities (song/chord.py's _QUALITY_ALIASES values) mapped
 # onto Wolfson's 4 harmonic-function classes. Root translation is the identity
@@ -364,6 +377,24 @@ def _is_structural_cue(song, bar_start: float) -> bool:
     if bar_start <= 0:
         return True
     return song.chord_at(bar_start) != song.chord_at(bar_start - BEATS_PER_BAR)
+
+
+def _decay_pitch_weighted(
+    pitch_sum: float, pitch_beats: float, elapsed_beats: float, half_life_beats: float
+) -> Tuple[float, float]:
+    """Exponentially decays an own_pitch_weighted-shaped (sum, beats) pair by
+    elapsed_beats of REAL performance time -- old history fades smoothly
+    instead of accumulating forever across a whole performance. Fixes
+    register_balance's own named "inertia" limitation (Phase 36's own plan
+    text: "a decaying/windowed 'recent mean'... a possible future refinement,
+    not attempted here"), confirmed necessary by a real listening-test
+    time-binned register analysis: an early "stuck low" episode on
+    songs/ii_v_i.chart took many chunks to correct, while a similar, late dip
+    on blues_in_f.chart corrected almost instantly -- the exact asymmetry a
+    pure, never-forgetting cumulative mean produces, and this function
+    removes. elapsed_beats == 0 -> unchanged (decay factor 1.0)."""
+    decay = 0.5 ** (elapsed_beats / half_life_beats)
+    return pitch_sum * decay, pitch_beats * decay
 
 
 def _ii_v_i_target(song, ii_beat: float) -> Optional[int]:
@@ -658,6 +689,12 @@ def sax_generator(
     own_pitch_weighted = {"sum": 0.0, "beats": 0.0}  # Phase 36 -- duration-weighted pitch
                                                         # accumulator, fed into register_balance
                                                         # as prior_mean_beats
+    own_pitch_weighted_last_beat = {"value": 0.0}  # Phase 44 -- bar_start at which
+                                                      # own_pitch_weighted was last
+                                                      # updated, so the next update can
+                                                      # decay by the REAL elapsed beats
+                                                      # (not chunk count) -- see
+                                                      # _decay_pitch_weighted
     chunks_dispensed = {"count": 0}  # Phase 39 -- how many plan chunks this voice has
                                        # built so far THIS performance; gates the
                                        # phrase-boundary rest below (no rest before
@@ -853,8 +890,18 @@ def sax_generator(
                 lo, hi = min(winner_real_pitches), max(winner_real_pitches)
                 own_pitch_range["low"] = lo if own_pitch_range["low"] is None else min(own_pitch_range["low"], lo)
                 own_pitch_range["high"] = hi if own_pitch_range["high"] is None else max(own_pitch_range["high"], hi)
+                # Phase 44: decay the accumulated history by however many real
+                # beats have elapsed since it was last touched, BEFORE adding
+                # this chunk's own contribution -- an early bad patch's weight
+                # fades over time instead of persisting for the whole
+                # performance (register_balance's own "inertia" fix).
+                own_pitch_weighted["sum"], own_pitch_weighted["beats"] = _decay_pitch_weighted(
+                    own_pitch_weighted["sum"], own_pitch_weighted["beats"],
+                    bar_start - own_pitch_weighted_last_beat["value"], REGISTER_BALANCE_HALF_LIFE_BEATS,
+                )
                 own_pitch_weighted["sum"] += sum(n["pitch"] * n["duration_beats"] for n in winner_real_in_register)
                 own_pitch_weighted["beats"] += sum(n["duration_beats"] for n in winner_real_in_register)
+                own_pitch_weighted_last_beat["value"] = bar_start
 
             if memory is not None:
                 memory.store(notes, score=best_score.overall, chord_quality=chord_quality)
@@ -881,6 +928,8 @@ def sax_generator(
     generate.own_pitch_range = own_pitch_range  # exposed for testing (Phase 32) -- same "expose the
                                                   # mutable dict directly" convention as dissonance_mode
     generate.own_pitch_weighted = own_pitch_weighted  # exposed for testing (Phase 36) -- same convention
+    generate.own_pitch_weighted_last_beat = own_pitch_weighted_last_beat  # exposed for testing
+                                                                             # (Phase 44) -- same convention
     generate.chunks_dispensed = chunks_dispensed  # exposed for testing (Phase 39) -- same convention
     generate.laying_out = laying_out  # exposed for testing (Phase 43) -- same convention
     return generate
