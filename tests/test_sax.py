@@ -301,3 +301,18 @@ def test_pick_achievable_motif_picks_the_highest_weighted_within_the_shortest_bu
 
 def test_pick_achievable_motif_empty_counter_is_none():
     assert _pick_achievable_motif(Counter()) is None
+
+
+def test_pick_achievable_motif_excludes_the_top_pick_falling_to_the_next_within_bucket():
+    counter = Counter({(3, -1): 4.0, (2, 2): 1.0})  # both 2-interval
+    assert _pick_achievable_motif(counter, exclude=frozenset({(3, -1)})) == (2, 2)
+
+
+def test_pick_achievable_motif_excludes_every_two_interval_candidate_falls_to_three():
+    counter = Counter({(3, -1): 4.0, (2, 2): 1.0, (1, -2, 4): 2.0})
+    assert _pick_achievable_motif(counter, exclude=frozenset({(3, -1), (2, 2)})) == (1, -2, 4)
+
+
+def test_pick_achievable_motif_exclude_default_reproduces_old_behaviour():
+    counter = Counter({(2, -1, 5, 3): 10.0, (2, 2): 1.0})
+    assert _pick_achievable_motif(counter) == _pick_achievable_motif(counter, exclude=frozenset())

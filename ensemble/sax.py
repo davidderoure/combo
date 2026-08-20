@@ -294,6 +294,17 @@ REGISTER_BALANCE_HALF_LIFE_BEATS = 16.0  # Phase 44 -- 4 bars. Placeholder,
                                             # enough that register_balance
                                             # isn't reduced to chunk-to-chunk
                                             # noise.
+MOTIF_STREAK_LIMIT = 4  # Phase 45 -- placeholder, same honest status as every
+                          # other hand-picked constant here. Empirically checked
+                          # (not guessed) against a real 45-chunk performance:
+                          # without this, a self-reinforcing recall loop let a
+                          # single motif monopolise recall for 26 consecutive
+                          # chunks (only 3 distinct motifs targeted in the whole
+                          # performance); excluding a motif once it's been
+                          # picked this many times in a row raised that to 6
+                          # distinct motifs, with real rotation between them --
+                          # still enough repeats for a motif to register as a
+                          # deliberate idea, not just noise.
 
 # combo's 17 canonical qualities (song/chord.py's _QUALITY_ALIASES values) mapped
 # onto Wolfson's 4 harmonic-function classes. Root translation is the identity
@@ -488,7 +499,7 @@ def _split_phrase_into_bars(
     return bars
 
 
-def _pick_achievable_motif(counter: Counter) -> Optional[tuple]:
+def _pick_achievable_motif(counter: Counter, exclude: frozenset = frozenset()) -> Optional[tuple]:
     """RehearsalMemory.recall_motifs() returns a Counter pooling 2-, 3-, and
     4-interval motifs together, weighted by quality (Phase 12). Picking simply
     the single most-common entry (any length) risks targeting a motif
@@ -500,9 +511,19 @@ def _pick_achievable_motif(counter: Counter) -> Optional[tuple]:
     most-common motif from the SHORTEST non-empty length bucket makes actual
     adherence achievable, not just theoretically fed in -- grounded directly in
     _apply_motif_bias's own prefix-matching logic, not guessed. None if the
-    counter is empty."""
+    counter is empty.
+
+    exclude (Phase 45), if given: candidates in this set are skipped entirely
+    (as if absent from counter), falling through to the next-highest-weighted
+    candidate in the same length bucket, or the next bucket if none remain --
+    lets a caller keep a long-running winner from being picked YET AGAIN
+    without touching RehearsalMemory's own storage/weighting at all. Default
+    frozenset() (every pre-Phase-45 caller) reproduces the exact old
+    behaviour."""
     for length in (2, 3, 4):
-        candidates = {motif: weight for motif, weight in counter.items() if len(motif) == length}
+        candidates = {
+            motif: weight for motif, weight in counter.items() if len(motif) == length and motif not in exclude
+        }
         if candidates:
             return max(candidates, key=candidates.get)
     return None
@@ -710,6 +731,12 @@ def sax_generator(
                                                          # (genuine silence) for the
                                                          # next real structural cue
                                                          # instead of resuming right away
+    motif_streak = {"motif": None, "count": 0}  # Phase 45 -- how many CONSECUTIVE
+                                                   # chunks have targeted the same
+                                                   # recalled motif, so a long-
+                                                   # running winner can be
+                                                   # temporarily excluded rather
+                                                   # than monopolising recall
 
     def generate(song, bar_index: int, timeline: Timeline, director_signal) -> List[NoteEvent]:
         if director_signal.gesture is not None and director_signal.gesture.name == "toggle_singability":
@@ -758,10 +785,29 @@ def sax_generator(
             previous_chord_idx["value"] = chord_idx
 
             motif_targets = []
+            picked = None
             if memory is not None:
-                picked = _pick_achievable_motif(memory.recall_motifs(chord_quality=chord_quality))
+                # Phase 45: a motif that's already been picked MOTIF_STREAK_LIMIT
+                # times in a row is excluded this round, forcing a genuinely
+                # different one to be tried -- without this, a self-reinforcing
+                # recall loop (the winning motif keeps getting echoed, which
+                # re-stores it, which keeps it winning) let a single motif
+                # monopolise recall for dozens of consecutive chunks.
+                exclude = (
+                    frozenset({motif_streak["motif"]})
+                    if motif_streak["count"] >= MOTIF_STREAK_LIMIT and motif_streak["motif"] is not None
+                    else frozenset()
+                )
+                picked = _pick_achievable_motif(memory.recall_motifs(chord_quality=chord_quality), exclude=exclude)
                 if picked is not None:
                     motif_targets = [picked]
+            if picked is not None and picked == motif_streak["motif"]:
+                motif_streak["count"] += 1
+            elif picked is not None:
+                motif_streak["motif"], motif_streak["count"] = picked, 1
+            else:
+                motif_streak["motif"], motif_streak["count"] = None, 0
+            generate.motif_target_log.append(picked)
 
             # Phase 29: corpus_familiarity is only meaningful for a chunk
             # already pushed off the model's own natural distribution by one
@@ -930,6 +976,9 @@ def sax_generator(
     generate.own_pitch_weighted = own_pitch_weighted  # exposed for testing (Phase 36) -- same convention
     generate.own_pitch_weighted_last_beat = own_pitch_weighted_last_beat  # exposed for testing
                                                                              # (Phase 44) -- same convention
+    generate.motif_streak = motif_streak  # exposed for testing (Phase 45) -- same convention
+    generate.motif_target_log = []  # one entry per chunk-build (Phase 45), the motif actually
+                                      # targeted that chunk (None when nothing was targeted)
     generate.chunks_dispensed = chunks_dispensed  # exposed for testing (Phase 39) -- same convention
     generate.laying_out = laying_out  # exposed for testing (Phase 43) -- same convention
     return generate

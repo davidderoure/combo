@@ -18,6 +18,7 @@ from ensemble.generators import chord_tone_generator
 from ensemble.memory import RehearsalMemory
 from ensemble.sax import (
     DEFAULT_MOTIF_STRENGTH,
+    MOTIF_STREAK_LIMIT,
     PHRASE_BOUNDARY_REST_BEATS,
     REGISTER_BALANCE_HALF_LIFE_BEATS,
     _decay_pitch_weighted,
@@ -500,6 +501,78 @@ def test_memory_preloads_a_fresh_session_from_a_previous_one():
     with spying_on_phrase_generator_calls() as calls:
         make_slow_session(memory=mem, seed=2).generate()  # "gig" run, fresh Session
     assert calls[0]["motif_targets"] != []
+
+
+def test_motif_streak_cooldown_produces_real_rotation_over_a_full_performance():
+    """Phase 45: a real, non-forced run over blues_in_f.chart (n_candidates=8,
+    motif_recall_candidates=20, matching self_test.py's/critic_baseline.py's
+    own real construction) -- without the cooldown, a real probe found a
+    single motif could monopolise recall for 26 CONSECUTIVE chunks out of 45,
+    with only 3 distinct motifs targeted across the whole performance.
+    Confirms the shipped fix: more than one distinct motif is targeted, and
+    no run of identical consecutive picks in generate.motif_target_log
+    exceeds MOTIF_STREAK_LIMIT."""
+    song = load_blues()
+    mem = RehearsalMemory()
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen = sax_generator(SAX_REGISTER, target_voice_id="bass", n_candidates=8, motif_recall_candidates=20, memory=mem, seed=7)
+    sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+    Session(song=song, voices=[bass, sax]).generate()
+
+    picks = sax_gen.motif_target_log
+    distinct = {p for p in picks if p is not None}
+    assert len(distinct) > 1  # not a total monopoly
+
+    longest_streak = 0
+    current, count = None, 0
+    for p in picks:
+        if p is not None and p == current:
+            count += 1
+        else:
+            current, count = p, (1 if p is not None else 0)
+        longest_streak = max(longest_streak, count)
+    assert longest_streak <= MOTIF_STREAK_LIMIT
+
+
+def test_motif_streak_at_limit_excludes_it_from_the_next_real_pick():
+    """Phase 45: directly manipulate sax_gen.motif_streak (the "expose
+    mutable state, manipulate it directly for testing" convention already
+    used for laying_out["active"], Phase 43) to simulate a motif already at
+    the streak limit, then drive one more real chunk and confirm the
+    dispensed pick is never that specific motif -- the direct proof of the
+    exclusion mechanism, not just an aggregate rotation count. plan_bars=1
+    guarantees exactly one real chunk-build per bar driven, removing any
+    ambiguity about whether a given bar_index triggers a fresh pick."""
+    from dataclasses import replace
+
+    from ensemble.timeline import Timeline
+
+    song = load_blues()
+    mem = RehearsalMemory()
+    bass = Voice(id="bass", instrument="bass", register=BASS_REGISTER, source="ai", generator=chord_tone_generator(BASS_REGISTER))
+    sax_gen = sax_generator(
+        SAX_REGISTER, target_voice_id="bass", n_candidates=8, motif_recall_candidates=20,
+        memory=mem, seed=7, plan_bars=1,
+    )
+    sax = Voice(id="sax", instrument="sax", register=SAX_REGISTER, source="ai", generator=sax_gen)
+
+    director_signal = DirectorSignal()
+    timeline = Timeline()
+    for bar_index in range(3):  # a few real bars so memory has real motifs to choose from
+        prior = Timeline(list(timeline.events))
+        for event in sax_gen(song, bar_index, prior, director_signal):
+            timeline.add(replace(event, voice_id="sax"))
+
+    forced_motif = sax_gen.motif_target_log[-1]
+    assert forced_motif is not None  # a real motif was targeted by bar 2
+    sax_gen.motif_streak["motif"] = forced_motif
+    sax_gen.motif_streak["count"] = MOTIF_STREAK_LIMIT
+
+    prior = Timeline(list(timeline.events))
+    for event in sax_gen(song, 3, prior, director_signal):
+        timeline.add(replace(event, voice_id="sax"))
+
+    assert sax_gen.motif_target_log[-1] != forced_motif
 
 
 def test_memory_stores_a_real_computed_musicality_score():

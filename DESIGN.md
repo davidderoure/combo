@@ -655,7 +655,37 @@ motif_adherence 1.0 for the persistent condition, 0.0 for a fresh-memory
 control, every single time. Whole-run averages are close between conditions
 (~1.00 vs ~0.95-0.98), a real, honest side-effect of the same fix rather than
 a confound: the mechanism is now reliably audible throughout a run, not only
-at rehearsal boundaries. Real listening also turned up a stuck note and
+at rehearsal boundaries.
+
+**A separate, later listening test (`listtest4.mid`) asked a different
+question about the same mechanism: not "does recall work at all" (Phase 17
+already proved it does) but "does it feel like development WITHIN one
+performance"** — "I would be happy if there was more motif repetition to
+give a sense of development through the phrases." Instrumented a real single
+performance directly (spying on `_pick_achievable_motif`'s own picks,
+`blues_in_f.chart`, 45 real chunk-builds) to find out, rather than analysing
+another static recording, which can't see inside `RehearsalMemory` at all.
+Real finding (Phase 45): only **3 distinct motif shapes were ever targeted
+across the whole 45-chunk performance** — one for 26 CONSECUTIVE chunks,
+then a second for the remaining 17. Traced to a genuine positive feedback
+loop, a different cause from a simple missing decay: `RehearsalMemory`
+already caps stored phrases at `DEFAULT_MAX_PHRASES` (16, a bounded window),
+but a winning motif keeps getting echoed by `_apply_motif_bias`, which
+re-stores it right back into the window every chunk it wins — the window can
+only forget content that stops recurring, and a self-reinforcing winner
+never stops recurring. Fixed with a per-motif cooldown, not a change to
+`RehearsalMemory` itself: `_pick_achievable_motif` gained an `exclude`
+parameter, and `sax_generator` tracks `motif_streak` — once a motif has been
+picked `MOTIF_STREAK_LIMIT` (`4`, a placeholder) times in a row, it's
+excluded from the next pick, forcing genuinely different material to be
+tried. Real, measured via the new `motif_diversity_check.py`: distinct
+motifs targeted per take rose from a single-seed probe's 3 to a real 10-take
+mean of **4.70** (min 3, max 7), with the longest same-motif streak reliably
+capped at the limit (mean 4.00 across 10 takes). This is a MECHANICAL
+diversity proof — more ideas genuinely get a turn — not yet confirmed by ear
+as sounding like better "development"; that's the next real listening test.
+
+Real listening also turned up a stuck note and
 dissonance David flagged directly ("even non-expert audiences can hear when
 something is dissonant... the one semitone delta is as bad as it gets in
 melodic playing, the dreaded minor 9th") — both fixed (Phase 18). The stuck

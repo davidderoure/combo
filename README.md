@@ -736,6 +736,27 @@ acts — scores `motif_adherence` 1.0 for the persistent condition and 0.0 for a
 fresh-memory control, every time. `self_test.py` now prints a plain marker
 ("echoed a motif from an earlier rehearsal") whenever this fires.
 
+**Cross-phrase motif development — breaking a self-reinforcing recall
+"monopoly"** (Phase 45). A later, separate listening test (`listtest4.mid`)
+asked a different question about the same mechanism: not whether recall
+works (Phase 17 proved it does) but whether it feels like real development
+*within* a single performance — "I would be happy if there was more motif
+repetition to give a sense of development through the phrases." Instrumented
+a real performance directly (no MIDI recording can see inside
+`RehearsalMemory`): across 45 real chunk-builds over `blues_in_f.chart`,
+only **3 distinct motifs were ever targeted** — one for 26 consecutive
+chunks, a second for the remaining 17. Cause: `RehearsalMemory` already caps
+stored phrases at 16 (a bounded window), but a winning motif keeps getting
+echoed and re-stored right back into that same window every chunk it wins —
+the window can only forget content that stops recurring, and a
+self-reinforcing winner never does. Fixed with a per-motif cooldown, not a
+change to `RehearsalMemory`: once a motif has been picked
+`MOTIF_STREAK_LIMIT` (`4`) times in a row, `_pick_achievable_motif` excludes
+it from the next pick. Real, measured via the new `motif_diversity_check.py`:
+distinct motifs per take rose to a 10-take mean of **4.70** (min 3, max 7),
+streaks reliably capped at the limit. A mechanical diversity proof, not yet
+confirmed by ear.
+
 **Dissonant notes are now actively avoided, not just tolerated** (Phase 18).
 David's own reaction after listening for real: "even non-expert audiences can
 hear when something is dissonant... the one semitone delta is as bad as it
@@ -1197,6 +1218,11 @@ suite is no longer sub-second once torch is imported.
   vs. a fresh one every loop, measuring `motif_adherence` and `repetition`
   directly rather than by ear — see Phase 17's rehearsal-memory paragraph above
   for what it found (`python rehearsal_ab_test.py`)
+- `motif_diversity_check.py` — small runnable analysis script (no MIDI/audio):
+  runs several real takes and reports how many distinct motifs
+  `RehearsalMemory` actually targets across a single performance, and the
+  longest same-motif streak — the direct instrumentation behind Phase 45's
+  cross-phrase-development fix (`python motif_diversity_check.py`)
 - `out_of_key_check.py` — small runnable analysis script (no MIDI/audio): counts
   how many of the sax's generated notes actually land out of key against the
   active chord's scale, at `self_test.py`'s real settings — see Phase 18's
